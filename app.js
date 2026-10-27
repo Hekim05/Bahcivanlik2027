@@ -99,6 +99,57 @@
     const p = progress();
     $("#progFill").style.width = p.pct + "%";
     $("#progTxt").textContent = "%" + p.pct + " · " + p.got + "/" + p.total;
+    renderDash(p);
+  }
+
+  /* ---------- gösterge paneli ---------- */
+  const AYLAR = ["ocak", "şubat", "mart", "nisan", "mayıs", "haziran", "temmuz", "ağustos", "eylül", "ekim", "kasım", "aralık"];
+  function programInfo() {
+    const s = secById("program"); if (!s) return null;
+    const t = s.parts[0].blocks.find(b => b.t === "tbl"); if (!t) return null;
+    const yearM = String((t.head || [])[0] || "").match(/(20\d\d)/);
+    const year = yearM ? +yearM[1] : 2027;
+    let start = null, end = null;
+    (t.rows || []).forEach(r => {
+      const m = String(r[0] || "").toLocaleLowerCase("tr").match(/(\d{1,2})\s+(ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)/);
+      if (!m) return;
+      const d = new Date(year, AYLAR.indexOf(m[2]), +m[1]);
+      if (!start || d < start) start = d;
+      if (!end || d > end) end = d;
+    });
+    const ramDays = new Set((t.rows || []).filter(r => /ramazan/i.test(r.join(" "))).map(r => r[0]).filter(Boolean)).size;
+    return { start, end, ramDays };
+  }
+  function renderDash(p) {
+    const el = $("#dash"); if (!el) return;
+    const pi = programInfo();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const fmt = d => d.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+    let dVal = "–", dSub = "Program tarihi yok";
+    if (pi && pi.start) {
+      const diff = Math.round((pi.start - today) / 86400000);
+      if (diff > 0) { dVal = diff + " gün"; dSub = fmt(pi.start) + " başlangıç"; }
+      else if (pi.end && today <= pi.end) { dVal = "Sürüyor"; dSub = fmt(pi.end) + " bitiş"; }
+      else { dVal = "Bitti"; dSub = fmt(pi.end || pi.start); }
+    }
+    const items = checklistItems();
+    const openN = items.filter(i => !i.done).length;
+    const ph = data.sections.filter(s => s.id !== "acik").reduce((a, s) => a + placeholderCount(s), 0);
+    const kc = kursiyerCount();
+    const ppl = fb.ok ? people() : [];
+    const onN = ppl.filter(x => x.online).length;
+    const dateItem = items.find(i => /^Tarih/i.test(i.x));
+    const tile = (go, icon, lbl, val, sub, cls) => `<button type="button" class="tile ${cls || ""}" data-nav="${go}"><span class="t-lbl">${icon} ${lbl}</span><span class="t-val">${val}</span><span class="t-sub">${sub}</span></button>`;
+    el.innerHTML = `<div class="dash-inner"><div class="dash-grid">
+      ${tile("program", "⏳", "Eğitime kalan", dVal, dSub)}
+      ${tile("durum", "📈", "Hazırlık", "%" + p.pct, p.got + "/" + p.total + " adım tamam", p.pct === 100 ? "ok-t" : "")}
+      ${tile("kursiyer", "👥", "Kursiyer", kc == null ? "–" : kc, kc ? "kayıtlı" : "liste yüklenmedi")}
+      ${tile("acik", "📝", "Açık nokta", openN, openN ? "karar bekliyor" : "hepsi tamam", openN ? "" : "ok-t")}
+      ${tile("durum", "✍️", "Boş alan", ph, "[ ] doldurulacak", ph ? "" : "ok-t")}
+      ${tile("durum", "🟢", "Bugün", fb.ok ? ppl.length + " kişi" : "–", fb.ok ? (onN ? onN + " kişi şu an açık" : "şu an açık yok") : "ortak kayıt yok")}
+    </div>
+    ${pi && pi.ramDays && dateItem && !dateItem.done ? `<button type="button" class="dash-alert" data-nav="tarih">⚠️ <span>Programda ${pi.ramDays} eğitim günü Ramazan'a denk geliyor. Tarih kararı bekliyor — öneriler için dokunun.</span></button>` : ""}
+    </div>`;
   }
 
   /* ---------- gezinme ---------- */
@@ -354,7 +405,7 @@
       presRef.child("first").transaction(v => v || Date.now()).catch(() => {});
       fb.root.child("presence/" + day).on("value", snap => {
         presence = snap.val() || {};
-        syncLabel();
+        syncLabel(); renderProgress();
         if (view.sec === "durum" && !editing && $("#sheetBack").hidden) render();
       });
     }
