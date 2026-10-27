@@ -93,6 +93,22 @@ tr.ramazan td:last-child{color:var(--amber);font-weight:600}
 td.empty-cell::after{content:"—";color:var(--muted)}
 .count-bar{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;background:var(--green-soft);border-radius:10px;padding:10px 12px;margin:8px 0 4px;font-size:15px}
 .count-bar b{font-size:18px;color:var(--green)}
+.shift-box{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+.shift-box .b{font-weight:700;margin-bottom:4px}
+.shift-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.shift-row input[type=date],.shift-row input[type=search],.shift-row input[type=number]{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);flex:1;min-width:150px}
+.shift-row input[type=number]{flex:0 0 auto;min-width:0}
+.yok-list{list-style:none;margin:6px 0 0;padding:0}
+.yok-list li{border-bottom:1px solid var(--line)}
+.yok-list label{display:flex;gap:12px;align-items:center;padding:10px 4px;font-size:16px}
+.yok-list input{width:24px;height:24px;accent-color:var(--green);flex:0 0 auto}
+tr.no-belge td{color:var(--muted)}
+.logp{border-bottom:1px solid var(--line);padding:4px 0}
+.logp summary{cursor:pointer;padding:8px 0;list-style:none}
+.logp summary::-webkit-details-marker{display:none}
+.logp summary::before{content:"▸ ";color:var(--green)}
+.logp[open] summary::before{content:"▾ "}
+.logp .log{padding-left:16px}
 .chk{list-style:none;padding:0;margin:0 0 12px}
 .chk li{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px dashed var(--line)}
 .chk input{width:22px;height:22px;margin-top:1px;accent-color:var(--green);flex:0 0 auto}

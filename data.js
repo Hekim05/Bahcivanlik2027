@@ -280,7 +280,8 @@ window.DEFAULT_DATA = {
           { t: "p", x: "Kursiyer listesini Ayarlar (⚙️) → Excel'den yükle ile bu sekmeye aktarın. Liste ada göre A→Z sıralanır ve numaralanır; elle eklenen isimler de düzenleme bitince sıraya girer." },
           { t: "tbl", head: ["No", "Ad Soyad"], rows: [], count: "kursiyer", sort: true }
         ]
-      }]
+      }, { id: "yoklama", title: "Yoklama", special: "yoklama", blocks: [] },
+      { id: "belge", title: "Belge durumu", special: "belge", blocks: [] }]
     },
     {
       id: "acik", icon: "✅", title: "Açık Noktalar", parts: [{

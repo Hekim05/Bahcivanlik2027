@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
-  const APP_VERSION = "8 · 27 Ekim 2026";
+  const APP_VERSION = "9 · 27 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -23,7 +23,8 @@
     const have = data.sections.find(s => s.id === ds.id);
     if (have) {
       have.title = ds.title; have.icon = ds.icon;
-      have.parts.forEach(p => { const dp = ds.parts.find(x => x.id === p.id); if (dp) p.title = dp.title; });
+      have.parts.forEach(p => { const dp = ds.parts.find(x => x.id === p.id); if (dp) { p.title = dp.title; if (dp.special) p.special = dp.special; } });
+      ds.parts.forEach((dp, j) => { if (!have.parts.some(p => p.id === dp.id)) have.parts.splice(j, 0, clone(dp)); });
       return;
     }
     const prev = i > 0 ? data.sections.findIndex(s => s.id === DEF.sections[i - 1].id) : -1;
@@ -38,6 +39,11 @@
   const fb = { db: null, ok: false, connected: false, root: null };
   const writeTimers = {};
   let installEvt = null;
+  let att = load("bhc27_att") || {};
+  let settings = load("bhc27_settings") || {};
+  let yokDay = null, yokQ = "", belgeOnly = false;
+  const openLogs = new Set();
+  const loggedYok = new Set();
   let presence = {}, presRef = null, presDay = null;
   const deviceId = localStorage.getItem("bhc27_dev") || (() => { const id = "d" + Math.random().toString(36).slice(2, 10); localStorage.setItem("bhc27_dev", id); return id; })();
   const todayKey = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
@@ -149,7 +155,7 @@
     el.innerHTML = `<div class="dash-inner"><div class="dash-grid">
       ${tile("program", "⏳", "Eğitime kalan", dVal, dSub)}
       ${tile("durum", "📈", "Hazırlık", "%" + p.pct, p.got + "/" + p.total + " adım tamam", p.pct === 100 ? "ok-t" : "")}
-      ${tile("kursiyer", "👥", "Kursiyer", kc == null ? "–" : kc, kc ? "kayıtlı" : "liste yüklenmedi")}
+      ${tile("kursiyer", "👥", "Kursiyer", kc == null ? "–" : kc, kc ? (attTaken() ? belgeStats().eligible + " belge hakkı" : "kayıtlı") : "liste yüklenmedi")}
       ${tile("acik", "📝", "Açık nokta", openN, openN ? "karar bekliyor" : "hepsi tamam", openN ? "" : "ok-t")}
       ${tile("durum", "✍️", "Boş alan", ph, "[ ] doldurulacak", ph ? "" : "ok-t")}
       ${tile("durum", "🟢", "Bugün", fb.ok ? ppl.length + " kişi" : "–", fb.ok ? (onN ? onN + " kişi şu an açık" : "şu an açık yok") : "ortak kayıt yok")}
@@ -186,13 +192,14 @@
         </div>
         ${multi ? `<div class="parts">${s.parts.map(x => `<button type="button" class="chip ${x.id === p.id ? "active" : ""}" data-part="${x.id}">${esc(x.title)}</button>`).join("")}</div>` : ""}
         <div class="tools">
-          <button type="button" class="tbtn ${editing ? "primary" : ""}" id="editBtn">${editing ? "✓ Düzenlemeyi bitir" : "✏️ Düzenle"}</button>
+          ${p.special ? "" : `<button type="button" class="tbtn ${editing ? "primary" : ""}" id="editBtn">${editing ? "✓ Düzenlemeyi bitir" : "✏️ Düzenle"}</button>`}
           <button type="button" class="tbtn word" data-exp="word">📝 Word</button>
           <button type="button" class="tbtn pdf" data-exp="pdf">📄 PDF</button>
           <button type="button" class="tbtn excel" data-exp="excel">📊 Excel</button>
         </div>
         ${editing ? `<div class="editing-note">Düzenleme açık. Metne ve tablo hücrelerine dokunup yazın; değişiklikler kaydedilir ve herkese yansır.</div>` : ""}
-        <div class="doc" id="doc">${renderBlocks(p.blocks)}</div>
+        ${s.id === "tarih" && !editing ? renderShiftBox() : ""}
+        <div class="doc" id="doc">${p.special === "yoklama" ? renderYoklama() : p.special === "belge" ? renderBelge() : renderBlocks(p.blocks)}</div>
       </section>`;
   }
 
@@ -332,7 +339,7 @@
     if (fb.ok) {
       fb.root.child("log").push({ ...entry, at: firebase.database.ServerValue.TIMESTAMP }).catch(() => {});
     } else {
-      log.unshift(entry); log = log.slice(0, 30); store(LS.log, log);
+      log.unshift(entry); log = log.slice(0, 100); store(LS.log, log);
       if (view.sec === "durum") render();
     }
   }
@@ -479,7 +486,23 @@
         if (!editing) render(); else renderProgress();
       }
     });
-    fb.root.child("log").limitToLast(30).on("value", s => {
+    fb.root.child("attendance").on("value", s => {
+      const v = s.val() || {};
+      if (JSON.stringify(v) === JSON.stringify(att)) return;
+      att = v; store("bhc27_att", att);
+      renderProgress();
+      const p = view.sec === "kursiyer" ? curPart() : null;
+      const typing = document.activeElement && document.activeElement.id === "yokQ";
+      if (p && p.special && !editing && !typing) render();
+      if (view.sec === "durum" && !editing) render();
+    });
+    fb.root.child("settings").on("value", s => {
+      const v = s.val() || {};
+      if (JSON.stringify(v) === JSON.stringify(settings)) return;
+      settings = v; store("bhc27_settings", settings);
+      if (view.sec === "kursiyer" && !editing) render(); else renderProgress();
+    });
+    fb.root.child("log").limitToLast(100).on("value", s => {
       const v = s.val() || {};
       log = Object.keys(v).map(k => v[k]).filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0));
       store(LS.log, log);
@@ -511,7 +534,7 @@
             <div><b>${p.secDone}/${p.secTotal}</b> bölüm tamamlandı</div>
             <div><b>${p.chkDone}/${p.chkTotal}</b> açık nokta işaretlendi</div>
             <div><b>${S.ph}</b> doldurulacak [ ] alan kaldı</div>
-            ${kursiyerCount() !== null ? `<div><b>${kursiyerCount()}</b> kursiyer kayıtlı</div>` : ""}
+            ${kursiyerCount() !== null ? `<div><b>${kursiyerCount()}</b> kursiyer kayıtlı${attTaken() ? ` · <b>${belgeStats().eligible}</b> belge hakkı` : ""}</div>` : ""}
             ${last ? `<div class="muted">Son değişiklik: ${esc(last.who)} · ${timeAgo(last.at)}</div>` : ""}
           </div>
         </div>
@@ -538,7 +561,7 @@
       </section>
       <section class="card">
         <h3 style="margin:0">Son değişiklikler</h3>
-        ${log.length ? `<ul class="log">${log.slice(0, 15).map(l => `<li><b>${esc(l.who)}</b> – ${esc(l.what)} <span class="when">${timeAgo(l.at)}</span></li>`).join("")}</ul>` : `<p class="muted">Henüz değişiklik yok.</p>`}
+        ${log.length ? renderLogGroups() : `<p class="muted">Henüz değişiklik yok.</p>`}
       </section>`;
   }
   function speakText() {
@@ -546,6 +569,7 @@
     const parts = [`Bahçıvanlık Eğitimi 2027 hazırlığı yüzde ${p.pct} tamamlandı.`];
     parts.push(`${p.secTotal} bölümden ${p.secDone} tanesi tamamlandı.`);
     if (kursiyerCount()) parts.push(`Kursiyer listesinde ${kursiyerCount()} kişi kayıtlı.`);
+    if (attTaken()) { const B = belgeStats(); parts.push(`Yoklamaya göre ${B.eligible} kursiyer belge almaya hak kazandı.`); }
     if (S.doneSecs.length) parts.push(`Tamamlanan bölümler: ${S.doneSecs.join(", ")}.`);
     if (S.openSecs.length) parts.push(`Devam eden bölümler: ${S.openSecs.join(", ")}.`);
     if (S.openItems.length) {
@@ -595,12 +619,12 @@
     closeSheet();
     const s = secOverride ? null : curSec(), p = secOverride ? null : curPart();
     let parts, title, heads;
-    if (scope === "part") { parts = [{ label: p.title, sheet: p.title, blocks: p.blocks }]; title = "Bahçıvanlık 2027 - " + p.title; heads = false; }
+    if (scope === "part") { parts = [{ label: p.title, sheet: p.title, blocks: blocksOf(p) }]; title = "Bahçıvanlık 2027 - " + p.title; heads = false; }
     else if (scope === "sec") {
-      parts = s.parts.map(x => ({ label: s.parts.length > 1 ? s.title + " – " + x.title : s.title, sheet: x.title, blocks: x.blocks }));
+      parts = s.parts.map(x => ({ label: s.parts.length > 1 ? s.title + " – " + x.title : s.title, sheet: x.title, blocks: blocksOf(x) }));
       title = "Bahçıvanlık 2027 - " + s.title; heads = s.parts.length > 1;
     } else {
-      parts = []; data.sections.forEach(sec => sec.parts.forEach(x => parts.push({ label: sec.parts.length > 1 ? sec.title + " – " + x.title : sec.title, sheet: sec.parts.length > 1 ? x.title : sec.title, blocks: x.blocks })));
+      parts = []; data.sections.forEach(sec => sec.parts.forEach(x => parts.push({ label: sec.parts.length > 1 ? sec.title + " – " + x.title : sec.title, sheet: sec.parts.length > 1 ? x.title : sec.title, blocks: blocksOf(x) })));
       title = "Bahçıvanlık Eğitimi 2027 Dosyası"; heads = true;
     }
     toast(FMT[fmt] + " hazırlanıyor…", 6000);
@@ -671,6 +695,250 @@
     let n = 0;
     s.parts.forEach(p => p.blocks.forEach(b => { if (b.t === "tbl") n += (b.rows || []).filter(r => r.slice(/^no$/i.test((b.head || [])[0] || "") ? 1 : 0).some(c => String(c || "").trim())).length; }));
     return n;
+  }
+
+  /* ---------- tarih kaydırma ---------- */
+  const AY_CAP = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+  const GUN_UZUN = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"];
+  const GUN_KISA = ["Paz.", "Pzt.", "Salı", "Çarş.", "Perş.", "Cuma", "Cmt."];
+  const ymd = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  const parseYmd = s => { const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
+  const RAM_S = new Date(2027, 1, 8), RAM_E = new Date(2027, 2, 8);
+  const BAY_S = new Date(2027, 2, 9), BAY_E = new Date(2027, 2, 11);
+  const TATIL = { "2027-01-01": "Yılbaşı", "2027-04-23": "23 Nisan", "2027-05-01": "1 Mayıs", "2027-05-19": "19 Mayıs",
+    "2027-05-15": "Kurban Bayramı arifesi", "2027-05-16": "Kurban Bayramı", "2027-05-17": "Kurban Bayramı", "2027-05-18": "Kurban Bayramı" };
+  const MON_RE = AY_CAP.join("|");
+  const DAY_RE = "Pazartesi|Salı|Çarşamba|Perşembe|Cuma|Cumartesi|Pazar|Pzt\\.|Çarş\\.|Perş\\.|Cmt\\.|Paz\\.";
+  const dayTag = d => {
+    if (d >= BAY_S && d <= BAY_E) return "BAYRAM – eğitim yapılamaz";
+    if (TATIL[ymd(d)]) return "Resmî tatil: " + TATIL[ymd(d)];
+    if (d >= RAM_S && d <= RAM_E) return "Ramazan";
+    return "";
+  };
+  function programTable() { const s = secById("program"); return s ? s.parts[0].blocks.find(b => b.t === "tbl") : null; }
+  function programDates() {
+    const t = programTable(); if (!t) return [];
+    const yM = String((t.head || [])[0] || "").match(/(20\d\d)/); const year = yM ? +yM[1] : 2027;
+    const out = []; let cur = null;
+    (t.rows || []).forEach(r => {
+      if (Exporter.isWeekRow(r)) return;
+      const m = String(r[0] || "").match(new RegExp("(\\d{1,2})\\s+(" + MON_RE + ")"));
+      if (m) { cur = new Date(year, AY_CAP.indexOf(m[2]), +m[1]); if (!out.some(o => +o.d === +cur)) out.push({ d: cur, rows: [] }); }
+      if (cur) out.find(o => +o.d === +cur).rows.push(r);
+    });
+    return out.sort((a, b) => a.d - b.d);
+  }
+  function workdays(start, n) {
+    const out = []; const d = new Date(start);
+    while (out.length < n) { if (d.getDay() !== 0 && d.getDay() !== 6) out.push(new Date(d)); d.setDate(d.getDate() + 1); }
+    return out;
+  }
+  const fmtLong = d => d.getDate() + " " + AY_CAP[d.getMonth()] + " " + d.getFullYear();
+  const fmtRange = (a, b) => a.getMonth() === b.getMonth() ? a.getDate() + "–" + b.getDate() + " " + AY_CAP[b.getMonth()] + " " + b.getFullYear() : a.getDate() + " " + AY_CAP[a.getMonth()] + "–" + b.getDate() + " " + AY_CAP[b.getMonth()] + " " + b.getFullYear();
+  function renderShiftBox() {
+    const pd = programDates();
+    const cur = pd.length ? fmtRange(pd[0].d, pd[pd.length - 1].d) : "–";
+    const tags = pd.map(o => dayTag(o.d)).filter(Boolean);
+    const ram = tags.filter(t => t === "Ramazan").length, other = tags.length - ram;
+    const q = (v, l) => `<button type="button" class="chip ${pd.length && ymd(pd[0].d) === v ? "active" : ""}" data-shift="${v}">${l}</button>`;
+    return `<div class="shift-box">
+      <div class="b">📅 Eğitim başlangıcını değiştir</div>
+      <div class="muted" style="font-size:14px">Şu anki program: <b>${cur}</b> · ${ram ? `<span style="color:var(--amber);font-weight:600">${ram} gün Ramazan'a denk</span>` : "Ramazan çakışması yok"}${other ? ` · <span style="color:var(--red);font-weight:600">${other} gün tatil/bayram</span>` : ""}</div>
+      <div class="parts" style="padding-top:10px">${q("2027-02-01", "Şubat planı · 1 Şubat")}${q("2027-01-18", "Öneri A · 18 Ocak")}${q("2027-03-15", "Öneri B · 15 Mart")}</div>
+      <div class="shift-row"><input type="date" id="shiftDate" value="${pd.length ? ymd(pd[0].d) : "2027-02-01"}" min="2026-11-01" max="2027-12-31"><button type="button" class="tbtn primary" data-shift="input">Bu tarihe taşı</button></div>
+      <div class="muted" style="font-size:12.5px;margin-top:6px">Seçince program, görev takvimi, resmî yazılar, ihtiyaç listeleri ve sunucu metinlerindeki tüm tarihler, gün adları ve Ramazan işaretleri birlikte güncellenir. Yoklama kayıtları da yeni tarihlere taşınır.</div>
+    </div>`;
+  }
+  let shiftPlan = null;
+  function shiftPreview(val) {
+    let d = parseYmd(val); if (!d) { toast("Geçerli bir tarih seçin"); return; }
+    const snapped = d.getDay() !== 1;
+    if (snapped) { const back = (d.getDay() + 6) % 7; d.setDate(d.getDate() - back); }
+    const old = programDates(); if (!old.length) { toast("Programda tarih bulunamadı"); return; }
+    if (ymd(old[0].d) === ymd(d)) { toast("Program zaten bu tarihte başlıyor"); return; }
+    const nd = workdays(d, old.length);
+    const map = {}; old.forEach((o, i) => { map[ymd(o.d)] = nd[i]; });
+    const tags = nd.map(dayTag).filter(Boolean);
+    const ram = tags.filter(t => t === "Ramazan").length, other = tags.length - ram;
+    shiftPlan = { map, oldYear: old[0].d.getFullYear(), newStart: d };
+    openSheet(`<h4>Programı taşı</h4>
+      ${snapped ? `<p style="color:var(--amber)">Program haftalık düzende olduğu için başlangıç o haftanın pazartesisine (${fmtLong(d)}) alındı.</p>` : ""}
+      <p><b>${fmtRange(old[0].d, old[old.length - 1].d)}</b> → <b>${fmtRange(nd[0], nd[nd.length - 1])}</b></p>
+      <p>${ram ? `⚠️ ${ram} eğitim günü Ramazan'a denk geliyor.` : "✅ Ramazan çakışması yok."}${other ? `<br>⛔ ${other} gün resmî tatil veya bayrama denk geliyor; programda işaretlenecek.` : ""}</p>
+      <p>Tüm bölümlerdeki tarihler, gün adları ve Ramazan işaretleri güncellenecek; değişiklik herkese yansır. Açık Noktalar'daki tarih maddesi tamamlandı olarak işaretlenecek.</p>
+      <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button><button type="button" class="tbtn primary" data-act="shiftGo">Taşı</button></div>`);
+  }
+  function shiftText(text, map, year, style) {
+    if (!text || !/\d/.test(text)) return text;
+    const re = new RegExp("(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})|(\\d{1,2})\\s*[–-]\\s*(\\d{1,2})\\s+(" + MON_RE + ")(\\s+\\d{4})?|(\\d{1,2})\\s+(" + MON_RE + ")(?:\\s+(" + DAY_RE + "))?(\\s+\\d{4})?", "g");
+    const look = d => map[ymd(d)];
+    const pad = (n, like) => like.length === 2 ? String(n).padStart(2, "0") : String(n);
+    return text.replace(re, (m, a1, a2, a3, b1, b2, bM, bY, c1, cM, cD, cY) => {
+      if (a1) {
+        const n = look(new Date(+a3, +a2 - 1, +a1)); if (!n) return m;
+        return String(n.getDate()).padStart(2, "0") + "." + String(n.getMonth() + 1).padStart(2, "0") + "." + n.getFullYear();
+      }
+      if (b1) {
+        const y = bY ? +bY.trim() : year, mi = AY_CAP.indexOf(bM);
+        const na = look(new Date(y, mi, +b1)), nb = look(new Date(y, mi, +b2)); if (!na || !nb) return m;
+        const out = na.getMonth() === nb.getMonth() ? na.getDate() + "–" + nb.getDate() + " " + AY_CAP[nb.getMonth()]
+          : na.getDate() + " " + AY_CAP[na.getMonth()] + "–" + nb.getDate() + " " + AY_CAP[nb.getMonth()];
+        return out + (bY ? " " + nb.getFullYear() : "");
+      }
+      const y = cY ? +cY.trim() : year;
+      const n = look(new Date(y, AY_CAP.indexOf(cM), +c1)); if (!n) return m;
+      let out = pad(n.getDate(), c1) + " " + AY_CAP[n.getMonth()];
+      if (cD) out += " " + (style === "short" ? GUN_KISA : GUN_UZUN)[n.getDay()];
+      if (cY) out += " " + n.getFullYear();
+      return out;
+    });
+  }
+  function blockStyle(b) {
+    const t = b.t === "tbl" ? (b.rows || []).map(r => r[0]).join(" ") : (b.x || "");
+    return /Pzt\.|Çarş\.|Perş\./.test(t) ? "short" : "long";
+  }
+  function retagProgram() {
+    const t = programTable(); if (!t) return;
+    const ni = (t.head || []).findIndex(h => /^not$/i.test(String(h).trim())); if (ni < 0) return;
+    const yM = String((t.head || [])[0] || "").match(/(20\d\d)/); const year = yM ? +yM[1] : 2027;
+    let cur = null;
+    t.rows.forEach(r => {
+      if (Exporter.isWeekRow(r)) return;
+      const m = String(r[0] || "").match(new RegExp("(\\d{1,2})\\s+(" + MON_RE + ")"));
+      if (m) cur = new Date(year, AY_CAP.indexOf(m[2]), +m[1]);
+      if (!cur) return;
+      let rest = String(r[ni] || "").replace(/Ramazan( 1\. gün)?/g, "").replace(/BAYRAM – eğitim yapılamaz/g, "").replace(/Resmî tatil: [^;]*/g, "").replace(/ikram planını gözden geçirin/g, "").replace(/^[;\s]+|[;\s]+$/g, "").replace(/;\s*;/g, ";");
+      let tag = dayTag(cur);
+      if (tag === "Ramazan" && /belge töreni/i.test(r.join(" "))) rest = rest ? rest + "; ikram planını gözden geçirin" : "ikram planını gözden geçirin";
+      r[ni] = [tag, rest].filter(Boolean).join("; ");
+    });
+  }
+  function applyShift() {
+    if (!shiftPlan) return;
+    if (editing) finishEdit();
+    const { map, oldYear, newStart } = shiftPlan;
+    const changed = [];
+    data.sections.forEach(s => {
+      if (s.id === "tarih") return;
+      s.parts.forEach(p => {
+        if (p.special) return;
+        const before = JSON.stringify(p.blocks);
+        p.blocks.forEach(b => {
+          const st = blockStyle(b);
+          if ("x" in b) b.x = shiftText(b.x, map, oldYear, st);
+          if (b.items) b.items = b.items.map(i => typeof i === "string" ? shiftText(i, map, oldYear, st) : i);
+          if (b.t === "tbl") { b.head = b.head.map(h => shiftText(h, map, oldYear, st)); b.rows = b.rows.map(r => r.map(c => shiftText(c, map, oldYear, st))); }
+        });
+        if (s.id === "program") retagProgram();
+        if (JSON.stringify(p.blocks) !== before) changed.push(keyOf(s, p));
+      });
+    });
+    const dateItem = checklistItems().find(i => /^Tarih/i.test(i.x));
+    if (dateItem && !dateItem.done) { dateItem.done = true; const a = secById("acik"); if (a) changed.push(keyOf(a, a.parts[0])); }
+    const natt = {};
+    Object.keys(att || {}).forEach(k => { const n = map[k]; natt[n ? ymd(n) : k] = att[k]; });
+    att = natt; store("bhc27_att", att);
+    if (fb.ok) fb.root.child("attendance").set(att).catch(() => {});
+    [...new Set(changed)].forEach(k => { dirty.add(k); queueWrite(k, true); });
+    store(LS.dirty, [...dirty]); store(LS.data, data);
+    addLog("Eğitim başlangıcını " + fmtLong(newStart) + " olarak değiştirdi");
+    shiftPlan = null; yokDay = null;
+    closeSheet(); renderNav(); render();
+    toast("Tarihler güncellendi ✓ (" + changed.length + " sayfa)", 3500);
+  }
+
+  /* ---------- yoklama ve belge ---------- */
+  const nkey = n => String(n).trim().toLocaleLowerCase("tr").replace(/[.#$\[\]\/]/g, "_").replace(/\s+/g, " ");
+  function kursiyerNames() {
+    const s = secById("kursiyer"); if (!s) return [];
+    const t = s.parts[0].blocks.find(b => b.t === "tbl"); if (!t) return [];
+    const hasNo = /^no$/i.test((t.head || [])[0] || "");
+    const ci = hasNo ? 1 : 0;
+    return (t.rows || []).map(r => String(r[ci] || "").trim()).filter(Boolean);
+  }
+  function classDays() {
+    return programDates().filter(o => o.rows.some(r => r[2] && !/belge töreni/i.test(r[2]))).map(o => ymd(o.d));
+  }
+  const attTaken = () => Object.keys(att || {}).some(k => att[k] && Object.keys(att[k]).length);
+  function belgeStats() {
+    const days = classDays(), names = kursiyerNames();
+    const D = days.length, M = Math.min(settings.minDays || Math.ceil(D * 0.7), D || 1);
+    const rows = names.map(n => { const k = nkey(n); const c = days.filter(d => att[d] && att[d][k]).length; return { n, c, ok: c >= M }; });
+    return { D, M, rows, eligible: rows.filter(r => r.ok).length, total: names.length };
+  }
+  function defaultYokDay(days) {
+    const t = todayKey();
+    if (days.includes(t)) return t;
+    return days.find(d => d > t) || days[days.length - 1];
+  }
+  const shortDay = s => { const d = parseYmd(s); return d.getDate() + " " + AY_CAP[d.getMonth()].slice(0, 3) + " " + GUN_KISA[d.getDay()].replace(".", ""); };
+  function renderYoklama() {
+    const names = kursiyerNames(), days = classDays();
+    if (!names.length) return `<p class="muted">Önce "Kursiyer listesi" sayfasına listeyi yükleyin (Ayarlar → Excel'den yükle).</p>`;
+    if (!days.length) return `<p class="muted">Programda ders günü bulunamadı.</p>`;
+    if (!yokDay || !days.includes(yokDay)) yokDay = defaultYokDay(days);
+    const pres = att[yokDay] || {};
+    const cnt = names.filter(n => pres[nkey(n)]).length;
+    const q = yokQ.trim().toLocaleLowerCase("tr");
+    return `<div class="parts">${days.map(d => { const c = names.filter(n => (att[d] || {})[nkey(n)]).length; return `<button type="button" class="chip ${d === yokDay ? "active" : ""}" data-yday="${d}">${shortDay(d)}${c ? ` · ${c}` : ""}</button>`; }).join("")}</div>
+      <div class="count-bar" id="yokCount"><b>${cnt}/${names.length}</b> geldi · ${fmtLong(parseYmd(yokDay))}</div>
+      <div class="shift-row"><input type="search" id="yokQ" placeholder="İsim ara…" value="${esc(yokQ)}" autocomplete="off"><button type="button" class="tbtn" data-yall="1">Tümü geldi</button><button type="button" class="tbtn" data-yall="0">Temizle</button></div>
+      <ul class="yok-list">${names.map((n, i) => { const k = nkey(n); return `<li data-n="${esc(n.toLocaleLowerCase("tr"))}" style="${q && !n.toLocaleLowerCase("tr").includes(q) ? "display:none" : ""}"><label><input type="checkbox" data-yname="${esc(n)}" ${pres[k] ? "checked" : ""}><span>${i + 1}. ${esc(n)}</span></label></li>`; }).join("")}</ul>`;
+  }
+  function setAtt(day, name, val) {
+    if (!day) return;
+    const k = nkey(name);
+    att[day] = att[day] || {};
+    if (val) att[day][k] = true; else delete att[day][k];
+    store("bhc27_att", att);
+    if (fb.ok) fb.root.child("attendance/" + day + "/" + k).set(val ? true : null).catch(err => toast("Kaydedilemedi: " + err.message));
+    const names = kursiyerNames(); const cnt = names.filter(n => (att[day] || {})[nkey(n)]).length;
+    const el = $("#yokCount"); if (el) el.innerHTML = `<b>${cnt}/${names.length}</b> geldi · ${fmtLong(parseYmd(day))}`;
+    if (!loggedYok.has(day)) { loggedYok.add(day); addLog("Yoklama aldı: " + fmtLong(parseYmd(day))); }
+    renderProgress();
+  }
+  function yokAll(val) {
+    const names = kursiyerNames(); if (!yokDay || !names.length) return;
+    if (!val && !confirm("Bu günün yoklaması temizlensin mi?")) return;
+    const obj = {}; if (val) names.forEach(n => { obj[nkey(n)] = true; });
+    att[yokDay] = obj; store("bhc27_att", att);
+    if (fb.ok) fb.root.child("attendance/" + yokDay).set(val ? obj : null).catch(() => {});
+    addLog((val ? "Tümünü geldi işaretledi: " : "Yoklamayı temizledi: ") + fmtLong(parseYmd(yokDay)));
+    render();
+  }
+  function renderBelge() {
+    const B = belgeStats();
+    if (!B.total) return `<p class="muted">Önce "Kursiyer listesi" sayfasına listeyi yükleyin.</p>`;
+    const rows = belgeOnly ? B.rows.filter(r => r.ok) : B.rows;
+    return `<div class="count-bar"><b>${B.eligible}</b> kursiyer belge almaya hak kazandı · toplam ${B.total}</div>
+      <div class="shift-row" style="align-items:center"><span>Belge için en az</span><input type="number" id="minDays" min="1" max="${B.D}" value="${B.M}" style="width:72px"><span>/ ${B.D} gün katılım</span></div>
+      <label class="cb" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="belgeOnly" ${belgeOnly ? "checked" : ""}> Yalnız hak kazananları göster</label>
+      ${attTaken() ? "" : `<p class="muted">Henüz yoklama alınmadı; "Yoklama" sayfasından gün gün işaretleyin.</p>`}
+      <div class="tbl-wrap"><table><thead><tr><th>No</th><th>Ad Soyad</th><th>Katılım</th><th>Belge</th></tr></thead><tbody>
+      ${rows.map((r, i) => `<tr class="${r.ok ? "" : "no-belge"}"><td>${i + 1}</td><td>${esc(r.n)}</td><td>${r.c}/${B.D}</td><td>${r.ok ? "✓ Hak kazandı" : "—"}</td></tr>`).join("")}
+      </tbody></table></div>`;
+  }
+  function blocksOf(p) {
+    if (p.special === "belge") {
+      const B = belgeStats();
+      return [{ t: "p", x: `Belge için en az ${B.M}/${B.D} gün katılım gerekir. ${B.eligible} kursiyer hak kazandı (toplam ${B.total}).` },
+        { t: "tbl", head: ["No", "Ad Soyad", "Katılım", "Belge"], rows: B.rows.map((r, i) => [String(i + 1), r.n, r.c + "/" + B.D, r.ok ? "Hak kazandı" : "—"]) }];
+    }
+    if (p.special === "yoklama") {
+      const days = classDays(), names = kursiyerNames();
+      return [{ t: "p", x: `Yoklama çizelgesi · ${names.length} kursiyer · ${days.length} ders günü` },
+        { t: "tbl", head: ["No", "Ad Soyad"].concat(days.map(d => { const x = parseYmd(d); return x.getDate() + "." + (x.getMonth() + 1); }), ["Toplam"]),
+          rows: names.map((n, i) => { const k = nkey(n); const marks = days.map(d => (att[d] || {})[k] ? "✓" : ""); return [String(i + 1), n].concat(marks, [String(marks.filter(Boolean).length)]); }) }];
+    }
+    return p.blocks;
+  }
+
+  /* ---------- son değişiklikler (kişiye göre) ---------- */
+  function renderLogGroups() {
+    const groups = [];
+    log.forEach(l => { let g = groups.find(x => x.who === l.who); if (!g) groups.push(g = { who: l.who, items: [] }); g.items.push(l); });
+    return `<div class="logp-list">${groups.map(g => `<details class="logp" ${openLogs.has(g.who) ? "open" : ""}><summary data-logwho="${esc(g.who)}"><b>${esc(g.who)}</b><span class="muted"> · ${g.items.length} değişiklik · son ${timeAgo(g.items[0].at)}</span></summary>
+      <ul class="log">${g.items.slice(0, 40).map(l => `<li>${esc(l.what)} <span class="when">${timeAgo(l.at)}</span></li>`).join("")}</ul></details>`).join("")}</div>`;
   }
 
   /* ---------- ek sekmeler ---------- */
@@ -828,6 +1096,11 @@
     const ex = t.closest("[data-exp]"); if (ex) { exportChooser(ex.dataset.exp); return; }
     const run = t.closest("[data-run]"); if (run) { runExport(run.dataset.run, run.dataset.scope); return; }
     const op = t.closest("button[data-op]"); if (op) { onOp(op); return; }
+    const sh = t.closest("[data-shift]"); if (sh) { shiftPreview(sh.dataset.shift === "input" ? ($("#shiftDate") || {}).value : sh.dataset.shift); return; }
+    if (t.closest("[data-act='shiftGo']")) { applyShift(); return; }
+    const yd = t.closest("[data-yday]"); if (yd) { yokDay = yd.dataset.yday; render(); return; }
+    const ya = t.closest("[data-yall]"); if (ya) { yokAll(ya.dataset.yall === "1"); return; }
+    const lg = t.closest("[data-logwho]"); if (lg) { const k = lg.dataset.logwho; openLogs.has(k) ? openLogs.delete(k) : openLogs.add(k); return; }
     if (t.closest("[data-close]") || t === $("#sheetBack")) { closeSheet(); return; }
     if (t.closest("#menuBtn") || t.closest("#syncBtn") || t.closest("#navSettings")) { menu(); return; }
     if (t.closest("#speakBtn")) { speak(); return; }
@@ -859,6 +1132,9 @@
   document.addEventListener("change", e => {
     if (e.target.id === "doneChk") { setDone(curSec().id, e.target.checked); return; }
     if (e.target.matches("input[data-op='chk']")) { onOp(e.target); return; }
+    if (e.target.matches("input[data-yname]")) { setAtt(yokDay, e.target.dataset.yname, e.target.checked); return; }
+    if (e.target.id === "minDays") { const v = Math.max(1, parseInt(e.target.value, 10) || 1); settings.minDays = v; store("bhc27_settings", settings); if (fb.ok) fb.root.child("settings/minDays").set(v).catch(() => {}); addLog("Belge için en az gün sayısını " + v + " yaptı"); render(); return; }
+    if (e.target.id === "belgeOnly") { belgeOnly = e.target.checked; render(); return; }
     if (e.target.id === "xlsxFile") { const f = e.target.files[0]; e.target.value = ""; if (f) importRead(f); return; }
     if (e.target.id === "impSheet") { imp.sheet = e.target.value; importSheet(); return; }
     if (e.target.id === "impTarget") { const n = $("#impNameWrap"); if (n) n.hidden = e.target.value !== "__new"; return; }
@@ -869,7 +1145,15 @@
       r.readAsText(f); e.target.value = "";
     }
   });
-  document.addEventListener("input", onInput);
+  document.addEventListener("input", e => {
+    if (e.target.id === "yokQ") {
+      yokQ = e.target.value;
+      const q = yokQ.trim().toLocaleLowerCase("tr");
+      document.querySelectorAll(".yok-list li").forEach(li => { li.style.display = !q || li.dataset.n.includes(q) ? "" : "none"; });
+      return;
+    }
+    onInput(e);
+  });
   document.addEventListener("paste", e => {
     const el = e.target.closest && e.target.closest("[contenteditable]");
     if (!el) return;

@@ -154,7 +154,8 @@
         }
       });
     });
-    const dd = { pageSize: "A4", pageMargins: [48, 48, 48, 56], content,
+    const wide = parts.some(pt => pt.blocks.some(b => b.t === "tbl" && (b.head || []).length > 7));
+    const dd = { pageSize: "A4", pageOrientation: wide ? "landscape" : "portrait", pageMargins: [48, 48, 48, 56], content,
       defaultStyle: { font: "Roboto", fontSize: 10.5, lineHeight: 1.2 },
       info: { title, author: "Kent Tarım Birimi" },
       footer: (cur, total) => ({ text: title + "  ·  " + cur + "/" + total, alignment: "center", fontSize: 8, color: "#888", margin: [0, 20, 0, 0] }) };
