@@ -1063,7 +1063,7 @@
     const yes = B.rows.filter(r => r.ok), no = B.rows.filter(r => !r.ok);
     const opts = [50, 60, 65, 70, 75, 80, 85, 90, 100];
     if (!opts.includes(B.pct)) opts.push(B.pct), opts.sort((a, b) => a - b);
-    const tbl = (list) => list.length ? `<div class="tbl-wrap"><table><thead><tr><th>No</th><th>Ad Soyad</th><th>Katıldığı gün</th><th>Oran</th></tr></thead><tbody>
+    const tbl = (list) => list.length ? `<div class="tbl-wrap"><table style="min-width:0"><thead><tr><th>No</th><th>Ad Soyad</th><th>Gün</th><th>Oran</th></tr></thead><tbody>
       ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.n)}</td><td>${r.c}/${B.D}</td><td>%${B.D ? Math.round(r.c * 100 / B.D) : 0}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Kimse yok.</p>`;
     return `<div class="shift-row" style="align-items:center;flex-wrap:wrap"><span>Belge sınırı: en az</span>
         <select id="minPct" style="width:auto;margin:0;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)">${opts.map(o => `<option value="${o}" ${o === B.pct ? "selected" : ""}>%${o}</option>`).join("")}</select>
