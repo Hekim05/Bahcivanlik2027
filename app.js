@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
-  const APP_VERSION = "11 · 27 Ekim 2026";
+  const APP_VERSION = "12 · 27 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -867,10 +867,11 @@
   const attTaken = () => Object.keys(att || {}).some(k => att[k] && Object.keys(att[k]).length);
   function belgeStats() {
     const days = classDays(), names = kursiyerNames();
-    const D = days.length, M = Math.min(settings.minDays || Math.ceil(D * 0.7), D || 1);
+    const pct = Math.max(1, Math.min(100, +settings.minPct || 70));
+    const D = days.length, M = Math.max(1, Math.ceil(D * pct / 100 - 1e-9));
     const K = keysOf(names);
     const rows = names.map((n, i) => { const k = K[i]; const c = days.filter(d => att[d] && att[d][k]).length; return { n, c, ok: c >= M }; });
-    return { D, M, rows, eligible: rows.filter(r => r.ok).length, total: names.length };
+    return { D, M, pct, rows, eligible: rows.filter(r => r.ok).length, total: names.length };
   }
   function defaultYokDay(days) {
     const t = todayKey();
@@ -1059,20 +1060,29 @@
   function renderBelge() {
     const B = belgeStats();
     if (!B.total) return `<p class="muted">Önce "Kursiyer listesi" sayfasına listeyi yükleyin.</p>`;
-    const rows = belgeOnly ? B.rows.filter(r => r.ok) : B.rows;
-    return `<div class="count-bar"><b>${B.eligible}</b> kursiyer belge almaya hak kazandı · toplam ${B.total}</div>
-      <div class="shift-row" style="align-items:center"><span>Belge için en az</span><input type="number" id="minDays" min="1" max="${B.D}" value="${B.M}" style="width:72px"><span>/ ${B.D} gün katılım</span></div>
-      <label class="cb" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="belgeOnly" ${belgeOnly ? "checked" : ""}> Yalnız hak kazananları göster</label>
+    const yes = B.rows.filter(r => r.ok), no = B.rows.filter(r => !r.ok);
+    const opts = [50, 60, 65, 70, 75, 80, 85, 90, 100];
+    if (!opts.includes(B.pct)) opts.push(B.pct), opts.sort((a, b) => a - b);
+    const tbl = (list) => list.length ? `<div class="tbl-wrap"><table><thead><tr><th>No</th><th>Ad Soyad</th><th>Katıldığı gün</th><th>Oran</th></tr></thead><tbody>
+      ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.n)}</td><td>${r.c}/${B.D}</td><td>%${B.D ? Math.round(r.c * 100 / B.D) : 0}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Kimse yok.</p>`;
+    return `<div class="shift-row" style="align-items:center;flex-wrap:wrap"><span>Belge sınırı: en az</span>
+        <select id="minPct" style="width:auto;margin:0;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)">${opts.map(o => `<option value="${o}" ${o === B.pct ? "selected" : ""}>%${o}</option>`).join("")}</select>
+        <span>katılım · <b>${B.D}</b> ders gününden en az <b>${B.M}</b> gün</span></div>
       ${attTaken() ? "" : `<p class="muted">Henüz yoklama alınmadı; "Yoklama" sayfasından gün gün işaretleyin.</p>`}
-      <div class="tbl-wrap"><table><thead><tr><th>No</th><th>Ad Soyad</th><th>Katılım</th><th>Belge</th></tr></thead><tbody>
-      ${rows.map((r, i) => `<tr class="${r.ok ? "" : "no-belge"}"><td>${i + 1}</td><td>${esc(r.n)}</td><td>${r.c}/${B.D}</td><td>${r.ok ? "✓ Hak kazandı" : "—"}</td></tr>`).join("")}
-      </tbody></table></div>`;
+      <div class="belge-sum"><div class="bs ok"><b>${yes.length}</b><span>belge alır</span></div><div class="bs no"><b>${no.length}</b><span>belge almaz</span></div><div class="bs"><b>${B.total}</b><span>toplam</span></div></div>
+      <h3 class="belge-h ok">✓ Belge alır (${yes.length})</h3>${tbl(yes)}
+      <h3 class="belge-h no">✗ Belge almaz (${no.length})</h3>${tbl(no)}`;
   }
   function blocksOf(p) {
     if (p.special === "belge") {
       const B = belgeStats();
-      return [{ t: "p", x: `Belge için en az ${B.M}/${B.D} gün katılım gerekir. ${B.eligible} kursiyer hak kazandı (toplam ${B.total}).` },
-        { t: "tbl", head: ["No", "Ad Soyad", "Katılım", "Belge"], rows: B.rows.map((r, i) => [String(i + 1), r.n, r.c + "/" + B.D, r.ok ? "Hak kazandı" : "—"]) }];
+      const yes = B.rows.filter(r => r.ok), no = B.rows.filter(r => !r.ok);
+      const rowsOf = l => l.map((r, i) => [String(i + 1), r.n, r.c + "/" + B.D, "%" + (B.D ? Math.round(r.c * 100 / B.D) : 0)]);
+      return [{ t: "p", x: `Belge sınırı: en az %${B.pct} katılım (${B.D} ders gününden en az ${B.M} gün). Toplam ${B.total} kursiyer: ${yes.length} belge alır, ${no.length} belge almaz.` },
+        { t: "h", x: `Belge alır (${yes.length})` },
+        { t: "tbl", head: ["No", "Ad Soyad", "Katıldığı gün", "Oran"], rows: rowsOf(yes) },
+        { t: "h", x: `Belge almaz (${no.length})` },
+        { t: "tbl", head: ["No", "Ad Soyad", "Katıldığı gün", "Oran"], rows: rowsOf(no) }];
     }
     if (p.special === "yoklama") {
       const days = classDays(), names = kursiyerNames();
@@ -1288,8 +1298,7 @@
     if (e.target.id === "doneChk") { setDone(curSec().id, e.target.checked); return; }
     if (e.target.matches("input[data-op='chk']")) { onOp(e.target); return; }
     if (e.target.matches("input[data-ykey]")) { setAtt(yokDay, e.target.dataset.ykey, e.target.checked, e.target.dataset.yname); return; }
-    if (e.target.id === "minDays") { const v = Math.max(1, parseInt(e.target.value, 10) || 1); settings.minDays = v; store("bhc27_settings", settings); if (fb.ok) fb.root.child("settings/minDays").set(v).catch(() => {}); addLog("Belge için en az gün sayısını " + v + " yaptı"); render(); return; }
-    if (e.target.id === "belgeOnly") { belgeOnly = e.target.checked; render(); return; }
+    if (e.target.id === "minPct") { const v = Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 70)); settings.minPct = v; store("bhc27_settings", settings); if (fb.ok) fb.root.child("settings/minPct").set(v).catch(() => {}); addLog("Belge sınırını %" + v + " yaptı"); render(); return; }
     if (e.target.name === "numMode") { numPreview(); return; }
     if (e.target.id === "imzaDay" || e.target.id === "masaN") { imzaSheet(true); return; }
     if (e.target.id === "xlsxFile") { const f = e.target.files[0]; e.target.value = ""; if (f) importRead(f); return; }

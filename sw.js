@@ -1,5 +1,5 @@
 /* Çevrimdışı önbellek – uygulama dosyaları önce ağdan, yoksa önbellekten */
-const CACHE = "bhc27-v11";
+const CACHE = "bhc27-v12";
 const SHELL = ["./", "index.html", "style.css", "app.js", "data.js", "export.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/icon-180.png"];
 const LAZY = ["vendor/docx.umd.js", "vendor/pdfmake.min.js", "vendor/vfs_fonts.js", "vendor/xlsx.mini.min.js", "vendor/xlsx.full.min.js"];

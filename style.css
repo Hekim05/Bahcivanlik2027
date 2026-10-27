@@ -105,6 +105,14 @@ td.empty-cell::after{content:"—";color:var(--muted)}
 .yok-list label{display:flex;gap:12px;align-items:center;padding:10px 4px;font-size:16px}
 .yok-list input{width:24px;height:24px;accent-color:var(--green);flex:0 0 auto}
 tr.no-belge td{color:var(--muted)}
+.belge-sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.belge-sum .bs{border-radius:12px;padding:10px;background:var(--bg);border:1px solid var(--line);display:flex;flex-direction:column;align-items:center}
+.belge-sum .bs b{font-size:26px;line-height:1.1}
+.belge-sum .bs span{font-size:12.5px;color:var(--muted)}
+.belge-sum .bs.ok{background:var(--green-soft);border-color:var(--green)}.belge-sum .bs.ok b{color:var(--green)}
+.belge-sum .bs.no{background:#fbebeb;border-color:#e3b3ad}.belge-sum .bs.no b{color:var(--red)}
+@media (prefers-color-scheme: dark){.belge-sum .bs.no{background:#3a2522;border-color:#6b3b35}}
+.belge-h{margin:16px 0 6px;font-size:16px}.belge-h.ok{color:var(--green)}.belge-h.no{color:var(--red)}
 .logp{border-bottom:1px solid var(--line);padding:4px 0}
 .logp summary{cursor:pointer;padding:8px 0;list-style:none}
 .logp summary::-webkit-details-marker{display:none}
