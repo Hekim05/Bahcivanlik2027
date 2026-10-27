@@ -1,8 +1,8 @@
 /* Çevrimdışı önbellek – uygulama dosyaları önce ağdan, yoksa önbellekten */
-const CACHE = "bhc27-v2";
+const CACHE = "bhc27-v3";
 const SHELL = ["./", "index.html", "style.css", "app.js", "data.js", "export.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/icon-180.png"];
-const LAZY = ["vendor/docx.umd.js", "vendor/pdfmake.min.js", "vendor/vfs_fonts.js", "vendor/xlsx.mini.min.js"];
+const LAZY = ["vendor/docx.umd.js", "vendor/pdfmake.min.js", "vendor/vfs_fonts.js", "vendor/xlsx.mini.min.js", "vendor/xlsx.full.min.js"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL).then(() => c.addAll(LAZY).catch(() => {}))).then(() => self.skipWaiting()));

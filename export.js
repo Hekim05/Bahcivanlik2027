@@ -199,5 +199,5 @@
     await save(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), safeName(title) + ".xlsx");
   }
 
-  window.Exporter = { toWord, toPdf, toExcel, save, safeName, isWeekRow, isRamazan, blockLines };
+  window.Exporter = { loadReader: () => loadScript("vendor/xlsx.full.min.js"), toWord, toPdf, toExcel, save, safeName, isWeekRow, isRamazan, blockLines };
 })();

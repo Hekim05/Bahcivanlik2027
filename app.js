@@ -180,7 +180,7 @@
       h += `</tr>`;
     });
     h += `</tbody></table></div>`;
-    if (editing) h += `<button type="button" class="add-line" data-op="row-end" data-bi="${bi}">+ Satır ekle</button>`;
+    if (editing) h += `<button type="button" class="add-line" data-op="row-end" data-bi="${bi}">+ Satır ekle</button> <button type="button" class="add-line" data-op="col-add" data-bi="${bi}">+ Sütun</button> ${n > 1 ? `<button type="button" class="add-line" data-op="col-del" data-bi="${bi}" style="border-color:var(--red);color:var(--red)">− Son sütunu sil</button>` : ""}`;
     return h;
   }
 
@@ -226,6 +226,8 @@
     if (op === "row-add") b.rows.splice(i + 1, 0, blank());
     if (op === "row-del") { if (!confirm("Bu satır silinsin mi?")) return; b.rows.splice(i, 1); }
     if (op === "row-end") b.rows.push(blank());
+    if (op === "col-add") { b.head.push("Yeni sütun"); b.rows.forEach(r => r.push("")); }
+    if (op === "col-del") { if (!confirm("Son sütun (" + b.head[b.head.length - 1] + ") silinsin mi?")) return; b.head.pop(); b.rows.forEach(r => r.pop()); }
     partChanged(true);
     render();
   }
@@ -294,7 +296,7 @@
       fb.ok = true;
       if (!snap.val()) {
         const parts = {}; eachPart((s, p, k) => { parts[k] = p.blocks; });
-        return fb.root.update({ parts, done, "meta/seeded": true, "meta/created": firebase.database.ServerValue.TIMESTAMP })
+        return fb.root.update({ parts, done, custom: customMap(), "meta/seeded": true, "meta/created": firebase.database.ServerValue.TIMESTAMP })
           .then(() => { dirty.clear(); store(LS.dirty, []); });
       }
       const upd = {};
@@ -357,6 +359,7 @@
   function listen() {
     fb.root.child("parts").on("value", s => {
       const v = s.val() || {};
+      remoteParts = v;
       let any = false, cur = false;
       Object.keys(v).forEach(k => {
         const p = partByKey(k);
@@ -379,6 +382,36 @@
       done = v; store(LS.done, done);
       renderNav();
       if (!editing) render(); else renderProgress();
+    });
+    fb.root.child("custom").on("value", s => {
+      const v = s.val() || {};
+      let changed = false, needPush = false;
+      data.sections.filter(x => x.custom).forEach(sec => {
+        if (v[sec.id]) return;
+        if (sec.parts.some(p => dirty.has(keyOf(sec, p)))) needPush = true;
+        else { data.sections = data.sections.filter(x => x !== sec); changed = true; }
+      });
+      Object.keys(v).sort((a, b) => ((v[a] || {}).order || 0) - ((v[b] || {}).order || 0)).forEach(id => {
+        const d = v[id] || {};
+        let sec = secById(id);
+        if (!sec) {
+          const parts = toArr(d.parts).filter(Boolean);
+          sec = { id, custom: true, icon: d.icon || "📋", title: d.title || "Sekme",
+            parts: (parts.length ? parts : [{ id: "main", title: d.title || "Sekme" }]).map(p => ({ id: p.id, title: p.title || d.title || "Sekme", blocks: normBlocks(remoteParts[id + "__" + p.id] || []) })) };
+          data.sections.push(sec); changed = true;
+        } else if (sec.custom && (sec.title !== d.title || sec.icon !== d.icon)) {
+          sec.title = d.title || sec.title; sec.icon = d.icon || sec.icon;
+          if (sec.parts.length === 1) sec.parts[0].title = sec.title;
+          changed = true;
+        }
+      });
+      if (needPush) pushCustom();
+      if (changed) {
+        store(LS.data, data);
+        if (view.sec !== "durum" && !secById(view.sec)) view.sec = "program";
+        renderNav();
+        if (!editing) render(); else renderProgress();
+      }
     });
     fb.root.child("log").limitToLast(30).on("value", s => {
       const v = s.val() || {};
@@ -518,6 +551,8 @@
     const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
     openSheet(`<h4>Menü</h4><p>Bağlantı: ${esc($("#syncTxt").textContent)}. ${fb.ok ? "Yaptığınız her değişiklik bu uygulamayı açan herkeste anında görünür." : "Ortak kayda bağlı değil; değişiklikler bu cihazda tutuluyor."}</p>
       <button type="button" class="opt" data-act="name">👤 Adım: ${esc(me || "belirtilmedi")}<small>Değişiklik geçmişinde görünen ad</small></button>
+      <button type="button" class="opt" data-act="tabs">🗂️ Sekmeler<small>Yeni sekme aç, adını değiştir veya sil</small></button>
+      <button type="button" class="opt" data-act="xlsx">📥 Excel'den yükle<small>Bir tabloyu yeni ya da mevcut sekmeye aktar</small></button>
       <button type="button" class="opt" data-run="word" data-scope="all">📝 Tüm dosya – Word</button>
       <button type="button" class="opt" data-run="pdf" data-scope="all">📄 Tüm dosya – PDF</button>
       <button type="button" class="opt" data-run="excel" data-scope="all">📊 Tüm dosya – Excel</button>
@@ -545,10 +580,140 @@
     store(LS.data, data); store(LS.done, done);
     if (fb.ok) {
       const parts = {}; eachPart((s, p, k) => { parts[k] = p.blocks; });
-      fb.root.update({ parts, done }).catch(err => toast("Yüklenemedi: " + err.message));
+      fb.root.update({ parts, done, custom: customMap() }).catch(err => toast("Yüklenemedi: " + err.message));
     }
     addLog("Yedekten geri yükleme yaptı");
     renderNav(); render(); toast("Yedek yüklendi ✓");
+  }
+
+  /* ---------- ek sekmeler ---------- */
+  let remoteParts = {};
+  function customMap() {
+    const m = {};
+    data.sections.forEach((s, i) => { if (s.custom) m[s.id] = { title: s.title, icon: s.icon || "📋", order: i, parts: s.parts.map(p => ({ id: p.id, title: p.title })) }; });
+    return m;
+  }
+  function pushCustom() { if (fb.ok) fb.root.child("custom").set(customMap()).catch(err => toast("Kaydedilemedi: " + err.message)); }
+  function createSection(title, icon, blocks) {
+    const id = "x" + Date.now().toString(36);
+    const sec = { id, icon: icon || "📋", title, custom: true, parts: [{ id: "main", title, blocks }] };
+    data.sections.push(sec); store(LS.data, data);
+    const k = keyOf(sec, sec.parts[0]);
+    dirty.add(k); store(LS.dirty, [...dirty]);
+    if (fb.ok) {
+      fb.root.child("parts/" + k).set(blocks).then(() => { dirty.delete(k); store(LS.dirty, [...dirty]); }).catch(() => {});
+      pushCustom();
+    }
+    addLog("Yeni sekme açtı: " + title);
+    return sec;
+  }
+  function tabsSheet() {
+    const list = data.sections.filter(s => s.custom);
+    openSheet(`<h4>Sekmeler</h4><p>Eklediğiniz sekmeler herkeste görünür. Hazır bölümler burada listelenmez ve silinemez.</p>
+      ${list.length ? list.map(s => `<div class="opt tab-row"><span>${s.icon} ${esc(s.title)}</span><button type="button" class="mini" data-act="tabRename" data-id="${s.id}" aria-label="Adını değiştir">✏️</button><button type="button" class="mini del" data-act="tabDel" data-id="${s.id}" aria-label="Sil">✕</button></div>`).join("") : `<p class="muted">Henüz eklenmiş sekme yok.</p>`}
+      <button type="button" class="opt" data-act="tabNew">➕ Yeni sekme<small>Boş bir tabloyla başlar; başlıkları, satırları ve sütunları düzenleyebilirsiniz</small></button>
+      <button type="button" class="opt" data-act="xlsx">📥 Excel'den yükle<small>Excel tablosunu yeni ya da mevcut sekmeye aktar</small></button>
+      <div class="row"><button type="button" class="tbtn" data-close>Kapat</button></div>`);
+  }
+  function tabNew() {
+    const name = (prompt("Yeni sekmenin adı:", "") || "").trim();
+    if (!name) return;
+    const sec = createSection(name, "📋", [
+      { t: "p", x: "[Açıklama yazın]" },
+      { t: "tbl", head: ["No", "Sütun 1", "Sütun 2"], rows: [["1", "", ""]] }
+    ]);
+    closeSheet(); go(sec.id); toast("Sekme açıldı. Düzenle ile içeriği doldurun.");
+  }
+  function tabRename(id) {
+    const s = secById(id); if (!s) return;
+    const name = (prompt("Sekmenin yeni adı:", s.title) || "").trim();
+    if (!name || name === s.title) return;
+    s.title = name; if (s.parts.length === 1) s.parts[0].title = name;
+    store(LS.data, data); pushCustom();
+    addLog("Sekme adını değiştirdi: " + name);
+    renderNav(); tabsSheet(); if (view.sec === id) render();
+  }
+  function tabDel(id) {
+    const s = secById(id); if (!s) return;
+    if (!confirm(`"${s.title}" sekmesi ve içindeki her şey herkes için silinecek. Emin misiniz?`)) return;
+    data.sections = data.sections.filter(x => x !== s);
+    s.parts.forEach(p => { const k = keyOf(s, p); dirty.delete(k); if (fb.ok) fb.root.child("parts/" + k).remove().catch(() => {}); });
+    store(LS.dirty, [...dirty]);
+    delete done[id]; store(LS.done, done); if (fb.ok) fb.root.child("done/" + id).remove().catch(() => {});
+    store(LS.data, data); pushCustom();
+    addLog("Sekmeyi sildi: " + s.title);
+    if (view.sec === id) view.sec = "program";
+    renderNav(); render(); tabsSheet();
+  }
+
+  /* ---------- Excel'den yükleme ---------- */
+  const imp = { wb: null, file: "", sheet: "", rows: [], headIdx: 0 };
+  const NAME_WORDS = ["ad", "adı", "adi", "soyad", "soyadı", "soyadi", "isim", "ismi", "soyisim", "soyismi", "name", "surname"];
+  const NOT_NAME = ["baba", "anne", "veli", "kullanıcı", "kullanici", "bostan", "parsel", "kurum", "firma", "dosya"];
+  function isNameCol(h) {
+    const w = String(h || "").toLocaleLowerCase("tr").split(/[^a-zçğıöşüâîû]+/).filter(Boolean);
+    return w.some(x => NAME_WORDS.includes(x)) && !w.some(x => NOT_NAME.includes(x));
+  }
+  async function importRead(file) {
+    toast("Excel okunuyor…", 4000);
+    try {
+      await Exporter.loadReader();
+      const buf = await file.arrayBuffer();
+      imp.wb = window.XLSX.read(buf, { type: "array" });
+      imp.file = file.name.replace(/\.[^.]+$/, "");
+      imp.sheet = imp.wb.SheetNames[0];
+      $("#toast").classList.remove("show");
+      importSheet();
+    } catch (e) { console.error(e); toast("Dosya okunamadı: " + (e.message || e), 5000); }
+  }
+  function importSheet() {
+    const ws = imp.wb.Sheets[imp.sheet];
+    const all = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false, blankrows: false })
+      .map(r => r.map(c => String(c == null ? "" : c).trim()));
+    let hi = all.findIndex(r => r.filter(Boolean).length >= 2);
+    if (hi < 0) hi = all.findIndex(r => r.some(Boolean));
+    imp.headIdx = Math.max(hi, 0); imp.rows = all;
+    const head = (all[imp.headIdx] || []).map((h, i) => h || ("Sütun " + (i + 1)));
+    const body = all.slice(imp.headIdx + 1).filter(r => r.some(Boolean));
+    const nameCols = head.map((h, i) => isNameCol(h) ? i : -1).filter(i => i >= 0);
+    const customs = data.sections.filter(s => s.custom);
+    const defName = nameCols.length ? "Kursiyerler" : imp.file;
+    openSheet(`<h4>Excel'den yükle</h4><p>${esc(imp.file)} · ${body.length} satır bulundu.</p>
+      ${imp.wb.SheetNames.length > 1 ? `<div class="lbl">Excel sayfası</div><select id="impSheet">${imp.wb.SheetNames.map(n => `<option ${n === imp.sheet ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>` : ""}
+      <div class="lbl">Alınacak sütunlar</div>
+      ${!nameCols.length ? `<p style="margin:4px 0">Ad-soyad sütunu bulunamadı; almak istediğiniz sütunları işaretleyin.</p>` : `<p style="margin:4px 0">Yalnız ad-soyad sütunları işaretli. Telefon, T.C. kimlik numarası gibi kişisel bilgileri eklemeyin; bu sayfa giriş gerektirmiyor.</p>`}
+      ${head.map((h, i) => `<label class="cb"><input type="checkbox" class="impCol" value="${i}" ${nameCols.includes(i) ? "checked" : ""}> ${esc(h)} <span class="muted" style="font-size:12px">${esc((body[0] || [])[i] || "")}</span></label>`).join("")}
+      <label class="cb"><input type="checkbox" id="impNo" checked> Başa sıra numarası ekle</label>
+      <div class="lbl">Nereye yüklensin?</div>
+      <select id="impTarget"><option value="__new">Yeni sekme</option>${customs.map(s => `<option value="${s.id}">${esc(s.title)} (içeriği değişir)</option>`).join("")}</select>
+      <div id="impNameWrap"><div class="lbl">Yeni sekmenin adı</div><input type="text" id="impName" value="${esc(defName)}"></div>
+      <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button><button type="button" class="tbtn primary" data-act="impRun">Yükle</button></div>`);
+  }
+  function importRun() {
+    const cols = [...document.querySelectorAll(".impCol:checked")].map(x => +x.value);
+    if (!cols.length) { toast("En az bir sütun seçin"); return; }
+    const withNo = $("#impNo").checked;
+    const target = $("#impTarget").value;
+    const head0 = (imp.rows[imp.headIdx] || []).map((h, i) => h || ("Sütun " + (i + 1)));
+    const body = imp.rows.slice(imp.headIdx + 1).map(r => cols.map(i => r[i] || "")).filter(r => r.some(Boolean));
+    const head = (withNo ? ["No"] : []).concat(cols.map(i => head0[i]));
+    const rows = body.map((r, n) => (withNo ? [String(n + 1)] : []).concat(r));
+    const when = new Date().toLocaleDateString("tr-TR");
+    const blocks = [{ t: "p", x: `${imp.file} dosyasından ${rows.length} kayıt yüklendi (${when}).` }, { t: "tbl", head, rows }];
+    let sec;
+    if (target === "__new") {
+      const name = ($("#impName").value || "").trim() || imp.file;
+      sec = createSection(name, "👥", blocks);
+    } else {
+      sec = secById(target); if (!sec) return;
+      if (!confirm(`"${sec.title}" sekmesinin içeriği bu tabloyla değiştirilecek. Devam edilsin mi?`)) return;
+      sec.parts[0].blocks = blocks;
+      const k = keyOf(sec, sec.parts[0]);
+      dirty.add(k); store(LS.dirty, [...dirty]); store(LS.data, data);
+      queueWrite(k, true);
+      addLog(`${sec.title} sekmesine Excel'den ${rows.length} kayıt yükledi`);
+    }
+    closeSheet(); go(sec.id); toast(rows.length + " kayıt yüklendi ✓");
   }
 
   /* ---------- olaylar ---------- */
@@ -574,6 +739,12 @@
         if (!v) { toast("Lütfen adınızı yazın"); return; }
         me = v; localStorage.setItem(LS.me, me); closeSheet(); toast("Merhaba " + me); presenceStart();
       }
+      if (a === "tabs") tabsSheet();
+      if (a === "tabNew") tabNew();
+      if (a === "tabRename") tabRename(act.dataset.id);
+      if (a === "tabDel") tabDel(act.dataset.id);
+      if (a === "xlsx") { closeSheet(); $("#xlsxFile").click(); }
+      if (a === "impRun") importRun();
       if (a === "install" && installEvt) { closeSheet(); installEvt.prompt(); installEvt = null; }
       if (a === "backup") { closeSheet(); backup(); }
       if (a === "restore") { closeSheet(); $("#importFile").click(); }
@@ -586,6 +757,9 @@
   document.addEventListener("change", e => {
     if (e.target.id === "doneChk") { setDone(curSec().id, e.target.checked); return; }
     if (e.target.matches("input[data-op='chk']")) { onOp(e.target); return; }
+    if (e.target.id === "xlsxFile") { const f = e.target.files[0]; e.target.value = ""; if (f) importRead(f); return; }
+    if (e.target.id === "impSheet") { imp.sheet = e.target.value; importSheet(); return; }
+    if (e.target.id === "impTarget") { const n = $("#impNameWrap"); if (n) n.hidden = e.target.value !== "__new"; return; }
     if (e.target.id === "importFile") {
       const f = e.target.files[0]; if (!f) return;
       const r = new FileReader();
