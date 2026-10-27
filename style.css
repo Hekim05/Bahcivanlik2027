@@ -98,6 +98,8 @@ td.empty-cell::after{content:"—";color:var(--muted)}
 .shift-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
 .shift-row input[type=date],.shift-row input[type=search],.shift-row input[type=number]{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);flex:1;min-width:150px}
 .shift-row input[type=number]{flex:0 0 auto;min-width:0}
+.yok-sticky{position:sticky;top:var(--hdr,92px);z-index:5;background:var(--card);padding:8px 0 6px;margin:0 -2px;border-bottom:1px solid var(--line)}
+.yok-search{width:100%;font-size:18px;padding:12px 14px;margin-top:8px;border:2px solid var(--green);border-radius:12px;background:var(--bg);color:var(--ink)}
 .yok-list{list-style:none;margin:6px 0 0;padding:0}
 .yok-list li{border-bottom:1px solid var(--line)}
 .yok-list label{display:flex;gap:12px;align-items:center;padding:10px 4px;font-size:16px}

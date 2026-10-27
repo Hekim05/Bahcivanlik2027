@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
-  const APP_VERSION = "9 · 27 Ekim 2026";
+  const APP_VERSION = "10 · 27 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -41,7 +41,9 @@
   let installEvt = null;
   let att = load("bhc27_att") || {};
   let settings = load("bhc27_settings") || {};
-  let yokDay = null, yokQ = "", belgeOnly = false;
+  let yokDay = null, yokQ = "", belgeOnly = false, yokFilter = "absent";
+  const fold = s => String(s || "").toLocaleLowerCase("tr").replace(/ç/g, "c").replace(/ğ/g, "g").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ş/g, "s").replace(/ü/g, "u").replace(/â/g, "a").replace(/î/g, "i").replace(/û/g, "u").replace(/\s+/g, " ").trim();
+  const nameMatch = (name, q) => { if (!q) return true; const f = fold(name); return f.split(" ").some(w => w.startsWith(q)) || f.includes(q); };
   const openLogs = new Set();
   const loggedYok = new Set();
   let presence = {}, presRef = null, presDay = null;
@@ -201,6 +203,7 @@
         ${s.id === "tarih" && !editing ? renderShiftBox() : ""}
         <div class="doc" id="doc">${p.special === "yoklama" ? renderYoklama() : p.special === "belge" ? renderBelge() : renderBlocks(p.blocks)}</div>
       </section>`;
+    if (p.special === "yoklama") { document.documentElement.style.setProperty("--hdr", ($(".top").offsetHeight || 90) + "px"); yokApplyFilter(); }
   }
 
   function renderBlocks(blocks) {
@@ -879,11 +882,27 @@
     if (!yokDay || !days.includes(yokDay)) yokDay = defaultYokDay(days);
     const pres = att[yokDay] || {};
     const cnt = names.filter(n => pres[nkey(n)]).length;
-    const q = yokQ.trim().toLocaleLowerCase("tr");
+    const fc = (f, l) => `<button type="button" class="chip ${yokFilter === f ? "active" : ""}" data-yfilter="${f}">${l}</button>`;
     return `<div class="parts">${days.map(d => { const c = names.filter(n => (att[d] || {})[nkey(n)]).length; return `<button type="button" class="chip ${d === yokDay ? "active" : ""}" data-yday="${d}">${shortDay(d)}${c ? ` · ${c}` : ""}</button>`; }).join("")}</div>
-      <div class="count-bar" id="yokCount"><b>${cnt}/${names.length}</b> geldi · ${fmtLong(parseYmd(yokDay))}</div>
-      <div class="shift-row"><input type="search" id="yokQ" placeholder="İsim ara…" value="${esc(yokQ)}" autocomplete="off"><button type="button" class="tbtn" data-yall="1">Tümü geldi</button><button type="button" class="tbtn" data-yall="0">Temizle</button></div>
-      <ul class="yok-list">${names.map((n, i) => { const k = nkey(n); return `<li data-n="${esc(n.toLocaleLowerCase("tr"))}" style="${q && !n.toLocaleLowerCase("tr").includes(q) ? "display:none" : ""}"><label><input type="checkbox" data-yname="${esc(n)}" ${pres[k] ? "checked" : ""}><span>${i + 1}. ${esc(n)}</span></label></li>`; }).join("")}</ul>`;
+      <div class="yok-sticky">
+        <div class="count-bar" id="yokCount" style="margin-top:0"><b>${cnt}/${names.length}</b> geldi · ${fmtLong(parseYmd(yokDay))}</div>
+        <input type="search" id="yokQ" class="yok-search" placeholder="🔍 Ad veya soyad yazın…" value="${esc(yokQ)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done">
+        <div class="parts" style="padding:6px 0 0">${fc("absent", "Gelmeyenler")}${fc("present", "Gelenler")}${fc("all", "Tümü")}</div>
+      </div>
+      <ul class="yok-list" id="yokList">${names.map((n, i) => { const k = nkey(n); return `<li data-f="${esc(fold(n))}" data-p="${pres[k] ? 1 : 0}"><label><input type="checkbox" data-yname="${esc(n)}" ${pres[k] ? "checked" : ""}><span>${i + 1}. ${esc(n)}</span></label></li>`; }).join("")}</ul>
+      <p class="muted" id="yokNone" hidden>Eşleşen isim yok.</p>
+      <div class="shift-row" style="margin-top:14px"><button type="button" class="tbtn" data-yall="1">Tümünü geldi işaretle</button><button type="button" class="tbtn" data-yall="0">Bu günü temizle</button></div>`;
+  }
+  function yokApplyFilter() {
+    const q = fold(yokQ);
+    let shown = 0;
+    document.querySelectorAll("#yokList li").forEach(li => {
+      const okQ = !q || li.dataset.f.split(" ").some(w => w.startsWith(q)) || li.dataset.f.includes(q);
+      const okF = yokFilter === "all" || (yokFilter === "present" ? li.dataset.p === "1" : li.dataset.p !== "1");
+      const show = okQ && (q ? true : okF);
+      li.style.display = show ? "" : "none"; if (show) shown++;
+    });
+    const none = $("#yokNone"); if (none) none.hidden = shown > 0;
   }
   function setAtt(day, name, val) {
     if (!day) return;
@@ -894,6 +913,11 @@
     if (fb.ok) fb.root.child("attendance/" + day + "/" + k).set(val ? true : null).catch(err => toast("Kaydedilemedi: " + err.message));
     const names = kursiyerNames(); const cnt = names.filter(n => (att[day] || {})[nkey(n)]).length;
     const el = $("#yokCount"); if (el) el.innerHTML = `<b>${cnt}/${names.length}</b> geldi · ${fmtLong(parseYmd(day))}`;
+    const box = document.querySelector(`input[data-yname="${CSS.escape(name)}"]`);
+    if (box) { box.checked = !!val; box.closest("li").dataset.p = val ? 1 : 0; }
+    const qi = $("#yokQ");
+    if (val && qi && qi.value.trim()) { toast("✓ " + name + " geldi", 1500); qi.value = ""; yokQ = ""; qi.focus(); }
+    yokApplyFilter();
     if (!loggedYok.has(day)) { loggedYok.add(day); addLog("Yoklama aldı: " + fmtLong(parseYmd(day))); }
     renderProgress();
   }
@@ -1099,6 +1123,7 @@
     const sh = t.closest("[data-shift]"); if (sh) { shiftPreview(sh.dataset.shift === "input" ? ($("#shiftDate") || {}).value : sh.dataset.shift); return; }
     if (t.closest("[data-act='shiftGo']")) { applyShift(); return; }
     const yd = t.closest("[data-yday]"); if (yd) { yokDay = yd.dataset.yday; render(); return; }
+    const yf = t.closest("[data-yfilter]"); if (yf) { yokFilter = yf.dataset.yfilter; document.querySelectorAll("[data-yfilter]").forEach(b => b.classList.toggle("active", b === yf)); yokApplyFilter(); return; }
     const ya = t.closest("[data-yall]"); if (ya) { yokAll(ya.dataset.yall === "1"); return; }
     const lg = t.closest("[data-logwho]"); if (lg) { const k = lg.dataset.logwho; openLogs.has(k) ? openLogs.delete(k) : openLogs.add(k); return; }
     if (t.closest("[data-close]") || t === $("#sheetBack")) { closeSheet(); return; }
@@ -1146,12 +1171,7 @@
     }
   });
   document.addEventListener("input", e => {
-    if (e.target.id === "yokQ") {
-      yokQ = e.target.value;
-      const q = yokQ.trim().toLocaleLowerCase("tr");
-      document.querySelectorAll(".yok-list li").forEach(li => { li.style.display = !q || li.dataset.n.includes(q) ? "" : "none"; });
-      return;
-    }
+    if (e.target.id === "yokQ") { yokQ = e.target.value; yokApplyFilter(); return; }
     onInput(e);
   });
   document.addEventListener("paste", e => {
@@ -1163,6 +1183,13 @@
   });
   document.addEventListener("keydown", e => {
     if (e.key === "Escape" && !$("#sheetBack").hidden) closeSheet();
+    if (e.key === "Enter" && e.target.id === "yokQ") {
+      e.preventDefault();
+      const vis = [...document.querySelectorAll("#yokList li")].filter(li => li.style.display !== "none" && li.dataset.p !== "1");
+      if (vis.length === 1) { const cb = vis[0].querySelector("input"); setAtt(yokDay, cb.dataset.yname, true); }
+      else if (vis.length > 1) toast(vis.length + " kişi eşleşti; birine dokunun");
+      else e.target.blur();
+    }
   });
   window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; });
   window.addEventListener("beforeunload", () => { Object.keys(writeTimers).forEach(flushWrite); });
