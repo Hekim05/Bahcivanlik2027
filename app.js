@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
-  const APP_VERSION = "10 · 27 Ekim 2026";
+  const APP_VERSION = "11 · 27 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -852,6 +852,8 @@
 
   /* ---------- yoklama ve belge ---------- */
   const nkey = n => String(n).trim().toLocaleLowerCase("tr").replace(/[.#$\[\]\/]/g, "_").replace(/\s+/g, " ");
+  // aynı ad-soyadlı iki kursiyer karışmasın diye ikinci ve sonrakilere ~2, ~3 eki verilir
+  const keysOf = names => { const seen = {}; return names.map(n => { const b = nkey(n); seen[b] = (seen[b] || 0) + 1; return seen[b] > 1 ? b + "~" + seen[b] : b; }); };
   function kursiyerNames() {
     const s = secById("kursiyer"); if (!s) return [];
     const t = s.parts[0].blocks.find(b => b.t === "tbl"); if (!t) return [];
@@ -866,7 +868,8 @@
   function belgeStats() {
     const days = classDays(), names = kursiyerNames();
     const D = days.length, M = Math.min(settings.minDays || Math.ceil(D * 0.7), D || 1);
-    const rows = names.map(n => { const k = nkey(n); const c = days.filter(d => att[d] && att[d][k]).length; return { n, c, ok: c >= M }; });
+    const K = keysOf(names);
+    const rows = names.map((n, i) => { const k = K[i]; const c = days.filter(d => att[d] && att[d][k]).length; return { n, c, ok: c >= M }; });
     return { D, M, rows, eligible: rows.filter(r => r.ok).length, total: names.length };
   }
   function defaultYokDay(days) {
@@ -881,15 +884,18 @@
     if (!days.length) return `<p class="muted">Programda ders günü bulunamadı.</p>`;
     if (!yokDay || !days.includes(yokDay)) yokDay = defaultYokDay(days);
     const pres = att[yokDay] || {};
-    const cnt = names.filter(n => pres[nkey(n)]).length;
+    const K = keysOf(names);
+    const cnt = K.filter(k => pres[k]).length;
     const fc = (f, l) => `<button type="button" class="chip ${yokFilter === f ? "active" : ""}" data-yfilter="${f}">${l}</button>`;
-    return `<div class="parts">${days.map(d => { const c = names.filter(n => (att[d] || {})[nkey(n)]).length; return `<button type="button" class="chip ${d === yokDay ? "active" : ""}" data-yday="${d}">${shortDay(d)}${c ? ` · ${c}` : ""}</button>`; }).join("")}</div>
+    return `<div class="shift-row" style="margin-top:4px"><button type="button" class="tbtn primary" data-act="imzaSheet">🖨️ İmza listesi</button><button type="button" class="tbtn" data-act="numSheet">🔢 Numarayla işle</button></div>
+      <div class="parts">${days.map(d => { const c = K.filter(k => (att[d] || {})[k]).length; return `<button type="button" class="chip ${d === yokDay ? "active" : ""}" data-yday="${d}">${shortDay(d)}${c ? ` · ${c}` : ""}</button>`; }).join("")}</div>
+      <div class="muted" style="font-size:13px;margin:2px 0 6px">Elle işaretlemek için aşağıdaki listeyi kullanın; kâğıttan toplu işlemek için "Numarayla işle".</div>
       <div class="yok-sticky">
         <div class="count-bar" id="yokCount" style="margin-top:0"><b>${cnt}/${names.length}</b> geldi · ${fmtLong(parseYmd(yokDay))}</div>
         <input type="search" id="yokQ" class="yok-search" placeholder="🔍 Ad veya soyad yazın…" value="${esc(yokQ)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done">
         <div class="parts" style="padding:6px 0 0">${fc("absent", "Gelmeyenler")}${fc("present", "Gelenler")}${fc("all", "Tümü")}</div>
       </div>
-      <ul class="yok-list" id="yokList">${names.map((n, i) => { const k = nkey(n); return `<li data-f="${esc(fold(n))}" data-p="${pres[k] ? 1 : 0}"><label><input type="checkbox" data-yname="${esc(n)}" ${pres[k] ? "checked" : ""}><span>${i + 1}. ${esc(n)}</span></label></li>`; }).join("")}</ul>
+      <ul class="yok-list" id="yokList">${names.map((n, i) => { const k = K[i]; return `<li data-f="${esc(fold(n))}" data-p="${pres[k] ? 1 : 0}"><label><input type="checkbox" data-ykey="${esc(k)}" data-yname="${esc(n)}" ${pres[k] ? "checked" : ""}><span>${i + 1}. ${esc(n)}</span></label></li>`; }).join("")}</ul>
       <p class="muted" id="yokNone" hidden>Eşleşen isim yok.</p>
       <div class="shift-row" style="margin-top:14px"><button type="button" class="tbtn" data-yall="1">Tümünü geldi işaretle</button><button type="button" class="tbtn" data-yall="0">Bu günü temizle</button></div>`;
   }
@@ -904,16 +910,136 @@
     });
     const none = $("#yokNone"); if (none) none.hidden = shown > 0;
   }
-  function setAtt(day, name, val) {
-    if (!day) return;
-    const k = nkey(name);
+  /* ---------- imza listesi (masalara bölünmüş) ---------- */
+  function splitMasa(names, k) {
+    k = Math.max(1, Math.min(k, names.length || 1));
+    const L = s => (s || "").charAt(0).toLocaleUpperCase("tr");
+    const N = names.length;
+    // kesme noktalarını harf değişimine kaydır: aynı harf iki masaya bölünmesin
+    const cuts = [0];
+    for (let m = 1; m < k; m++) {
+      const ideal = Math.round(m * N / k), prev = cuts[cuts.length - 1];
+      let best = -1;
+      for (let d = 0; d <= Math.ceil(N / k / 2); d++) {
+        for (const j of [ideal - d, ideal + d]) {
+          if (j > prev && j < N && L(names[j]) !== L(names[j - 1])) { best = j; break; }
+        }
+        if (best >= 0) break;
+      }
+      cuts.push(best >= 0 ? best : Math.max(prev + 1, ideal));
+    }
+    cuts.push(N);
+    const out = [];
+    for (let m = 0; m < k; m++) {
+      const list = names.slice(cuts[m], cuts[m + 1]).map((n, j) => ({ no: cuts[m] + j + 1, n }));
+      if (!list.length) continue;
+      out.push({ m: out.length + 1, list, from: L(list[0].n), to: L(list[list.length - 1].n) });
+    }
+    return out;
+  }
+  function dayKonu(dayStr) {
+    const o = programDates().find(x => ymd(x.d) === dayStr);
+    return o ? o.rows.map(r => r[2]).filter(Boolean).join(" / ") : "";
+  }
+  let imzaState = { masa: null, day: null };
+  function imzaSheet(refresh) {
+    const names = kursiyerNames(), days = classDays();
+    if (!names.length) { toast("Önce kursiyer listesini yükleyin"); return; }
+    if (refresh) { imzaState.masa = Math.max(1, Math.min(10, parseInt(($("#masaN") || {}).value, 10) || 5)); imzaState.day = ($("#imzaDay") || {}).value; }
+    const k = imzaState.masa || settings.masa || 5;
+    const day = imzaState.day != null ? imzaState.day : (yokDay || days[0] || "");
+    const groups = splitMasa(names, k);
+    openSheet(`<h4>🖨️ Yoklama imza listesi</h4><p>${names.length} kursiyer, ad sırasına göre masalara bölünür. Her masa ayrı sayfadan başlar; ilk sayfa girişe asılacak yönlendirmedir.</p>
+      <div class="lbl">Gün</div><select id="imzaDay"><option value="" ${day === "" ? "selected" : ""}>Tarihsiz (elle doldurulacak)</option>${days.map(d => `<option value="${d}" ${d === day ? "selected" : ""}>${fmtLong(parseYmd(d))} · ${esc(dayKonu(d).slice(0, 40))}</option>`).join("")}</select>
+      <div class="lbl">Masa sayısı</div><input type="number" id="masaN" min="1" max="10" value="${k}" style="width:90px;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)">
+      <ul class="status-list" style="margin-top:8px">${groups.map(g => `<li><span class="st ok">Masa ${g.m}</span><span class="nm"><b>${g.from}–${g.to}</b> <span class="muted">· ${g.list.length} kişi · No ${g.list[0] ? g.list[0].no : "-"}–${g.list.length ? g.list[g.list.length - 1].no : "-"}</span></span></li>`).join("")}</ul>
+      <div class="row"><button type="button" class="tbtn" data-close>Kapat</button><button type="button" class="tbtn word" data-act="imzaWord">📝 Word</button><button type="button" class="tbtn primary" data-act="imzaPdf">📄 PDF</button></div>`);
+  }
+  async function imzaExport(fmt) {
+    const names = kursiyerNames();
+    const k = Math.max(1, Math.min(10, parseInt(($("#masaN") || {}).value, 10) || imzaState.masa || 5));
+    const day = ($("#imzaDay") || {}).value || "";
+    if (settings.masa !== k) { settings.masa = k; store("bhc27_settings", settings); if (fb.ok) fb.root.child("settings/masa").set(k).catch(() => {}); }
+    closeSheet();
+    const groups = splitMasa(names, k);
+    const tarih = day ? fmtLong(parseYmd(day)) + " " + GUN_UZUN[parseYmd(day).getDay()] : "Tarih: ....../....../2027";
+    const konu = day ? dayKonu(day) : "";
+    const parts = [{ label: "Yoklama masaları", blocks: [
+      { t: "c", x: "BAHÇIVANLIK EĞİTİMİ 2027\nYOKLAMA MASALARI" },
+      { t: "p", x: tarih + (konu ? "\nDers: " + konu : "") + "\nLütfen adınızın baş harfine göre ilgili masaya geçip isminizin karşısını imzalayınız." },
+      { t: "tbl", big: true, head: ["Masa", "Ad baş harfi", "Kişi"], rows: groups.map(g => ["Masa " + g.m, g.from + " – " + g.to, String(g.list.length)]), pdfWidths: ["auto", "*", "auto"] }
+    ] }];
+    groups.forEach(g => parts.push({ label: `Masa ${g.m} · ${g.from}–${g.to}`, blocks: [
+      { t: "p", x: "BAHÇIVANLIK EĞİTİMİ 2027 – YOKLAMA İMZA LİSTESİ\n" + tarih + (konu ? " · " + konu : "") },
+      { t: "tbl", tall: true, head: ["No", "Ad Soyad", "İmza"], rows: g.list.map(x => [String(x.no), x.n, ""]), pdfWidths: ["auto", "*", 170], widthsPct: [10, 55, 35] },
+      { t: "p", x: "Masa sorumlusu: ......................................   İmza: ................" }
+    ] }));
+    const title = "Yoklama imza listesi " + (day ? fmtLong(parseYmd(day)) : "tarihsiz");
+    toast("İmza listesi hazırlanıyor…", 6000);
+    try {
+      if (fmt === "pdf") await Exporter.toPdf(parts, title, true); else await Exporter.toWord(parts, title, true);
+      toast("İmza listesi hazır ✓");
+    } catch (e) { console.error(e); toast("Hazırlanamadı: " + (e.message || e), 5000); }
+  }
+
+  /* ---------- kâğıttan numarayla işleme ---------- */
+  function parseNums(txt, max) {
+    const ok = new Set(), bad = [];
+    String(txt || "").split(/[^0-9\-–]+/).filter(Boolean).forEach(tok => {
+      const m = tok.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+      if (m) { let a = +m[1], b = +m[2]; if (a > b) [a, b] = [b, a]; for (let i = a; i <= b; i++) (i >= 1 && i <= max ? ok.add(i) : bad.push(i)); }
+      else if (/^\d+$/.test(tok)) { const i = +tok; (i >= 1 && i <= max ? ok.add(i) : bad.push(i)); }
+    });
+    return { nums: [...ok].sort((a, b) => a - b), bad };
+  }
+  function numSheet() {
+    const names = kursiyerNames(); if (!names.length || !yokDay) { toast("Önce kursiyer listesini yükleyin"); return; }
+    const has = att[yokDay] && Object.keys(att[yokDay]).length;
+    openSheet(`<h4>🔢 Kâğıttan işle · ${fmtLong(parseYmd(yokDay))}</h4>
+      <p>İmza kâğıdındaki sıra numaralarını yazın. Aralık da olur: <b>12, 45, 46-50</b></p>
+      <label class="cb"><input type="radio" name="numMode" value="absent" checked> Gelmeyenlerin numaralarını yazacağım <small class="muted">(diğerleri geldi sayılır)</small></label>
+      <label class="cb"><input type="radio" name="numMode" value="present"> Gelenlerin numaralarını yazacağım</label>
+      <textarea id="numIn" rows="3" inputmode="numeric" placeholder="Örn: 3, 17, 45-48, 120" style="width:100%;font:inherit;font-size:18px;padding:10px 12px;margin-top:8px;border:2px solid var(--green);border-radius:12px;background:var(--bg);color:var(--ink)"></textarea>
+      <div id="numPrev" class="muted" style="font-size:14px;margin-top:8px"></div>
+      ${has ? `<p style="color:var(--amber);margin-top:8px">Bu gün için daha önce yoklama girilmiş; uygularsanız bu günün kaydı yenisiyle değişir.</p>` : ""}
+      <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button><button type="button" class="tbtn primary" data-act="numApply">Uygula</button></div>`);
+    numPreview();
+    setTimeout(() => { const t = $("#numIn"); if (t) t.focus(); }, 60);
+  }
+  function numPreview() {
+    const names = kursiyerNames(); const el = $("#numPrev"); if (!el) return;
+    const mode = (document.querySelector("input[name=numMode]:checked") || {}).value || "absent";
+    const { nums, bad } = parseNums(($("#numIn") || {}).value, names.length);
+    const present = mode === "absent" ? names.length - nums.length : nums.length;
+    el.innerHTML = `<div class="count-bar" style="margin:0 0 6px"><b>${present}/${names.length}</b> geldi olarak kaydedilecek</div>`
+      + (nums.length ? `<b>${mode === "absent" ? "Gelmedi" : "Geldi"} (${nums.length}):</b> ` + nums.map(i => `${i}. ${esc(names[i - 1])}`).join(" · ") : "")
+      + (bad.length ? `<div style="color:var(--red);margin-top:4px">Listede olmayan numara: ${bad.join(", ")} (1–${names.length} arası olmalı)</div>` : "");
+  }
+  function numApply() {
+    const names = kursiyerNames(); if (!yokDay) return;
+    const mode = (document.querySelector("input[name=numMode]:checked") || {}).value || "absent";
+    const { nums, bad } = parseNums(($("#numIn") || {}).value, names.length);
+    if (bad.length && !confirm("Listede olmayan numaralar var (" + bad.join(", ") + "). Bunlar atlanarak devam edilsin mi?")) return;
+    if (mode === "present" && !nums.length) { toast("Numara yazın"); return; }
+    const set = new Set(nums);
+    const obj = {};
+    const K = keysOf(names);
+    names.forEach((n, i) => { const listed = set.has(i + 1); if (mode === "absent" ? !listed : listed) obj[K[i]] = true; });
+    att[yokDay] = obj; store("bhc27_att", att);
+    if (fb.ok) fb.root.child("attendance/" + yokDay).set(Object.keys(obj).length ? obj : null).catch(err => toast("Kaydedilemedi: " + err.message));
+    addLog(`Kâğıttan yoklama işledi: ${fmtLong(parseYmd(yokDay))} (${Object.keys(obj).length}/${names.length} geldi)`);
+    closeSheet(); render(); toast(`Kaydedildi ✓ ${Object.keys(obj).length}/${names.length} geldi`, 3000);
+  }
+
+  function setAtt(day, k, val, name) {
+    if (!day || !k) return;
     att[day] = att[day] || {};
     if (val) att[day][k] = true; else delete att[day][k];
     store("bhc27_att", att);
     if (fb.ok) fb.root.child("attendance/" + day + "/" + k).set(val ? true : null).catch(err => toast("Kaydedilemedi: " + err.message));
-    const names = kursiyerNames(); const cnt = names.filter(n => (att[day] || {})[nkey(n)]).length;
+    const names = kursiyerNames(); const cnt = keysOf(names).filter(x => (att[day] || {})[x]).length;
     const el = $("#yokCount"); if (el) el.innerHTML = `<b>${cnt}/${names.length}</b> geldi · ${fmtLong(parseYmd(day))}`;
-    const box = document.querySelector(`input[data-yname="${CSS.escape(name)}"]`);
+    const box = document.querySelector(`input[data-ykey="${CSS.escape(k)}"]`);
     if (box) { box.checked = !!val; box.closest("li").dataset.p = val ? 1 : 0; }
     const qi = $("#yokQ");
     if (val && qi && qi.value.trim()) { toast("✓ " + name + " geldi", 1500); qi.value = ""; yokQ = ""; qi.focus(); }
@@ -924,7 +1050,7 @@
   function yokAll(val) {
     const names = kursiyerNames(); if (!yokDay || !names.length) return;
     if (!val && !confirm("Bu günün yoklaması temizlensin mi?")) return;
-    const obj = {}; if (val) names.forEach(n => { obj[nkey(n)] = true; });
+    const obj = {}; if (val) keysOf(names).forEach(k => { obj[k] = true; });
     att[yokDay] = obj; store("bhc27_att", att);
     if (fb.ok) fb.root.child("attendance/" + yokDay).set(val ? obj : null).catch(() => {});
     addLog((val ? "Tümünü geldi işaretledi: " : "Yoklamayı temizledi: ") + fmtLong(parseYmd(yokDay)));
@@ -952,7 +1078,7 @@
       const days = classDays(), names = kursiyerNames();
       return [{ t: "p", x: `Yoklama çizelgesi · ${names.length} kursiyer · ${days.length} ders günü` },
         { t: "tbl", head: ["No", "Ad Soyad"].concat(days.map(d => { const x = parseYmd(d); return x.getDate() + "." + (x.getMonth() + 1); }), ["Toplam"]),
-          rows: names.map((n, i) => { const k = nkey(n); const marks = days.map(d => (att[d] || {})[k] ? "✓" : ""); return [String(i + 1), n].concat(marks, [String(marks.filter(Boolean).length)]); }) }];
+          rows: (K => names.map((n, i) => { const k = K[i]; const marks = days.map(d => (att[d] || {})[k] ? "✓" : ""); return [String(i + 1), n].concat(marks, [String(marks.filter(Boolean).length)]); }))(keysOf(names)) }];
     }
     return p.blocks;
   }
@@ -1140,6 +1266,10 @@
         me = v; localStorage.setItem(LS.me, me); closeSheet(); toast("Merhaba " + me); presenceStart();
       }
       if (a === "tabs") tabsSheet();
+      if (a === "imzaSheet") imzaSheet();
+      if (a === "imzaPdf" || a === "imzaWord") imzaExport(a === "imzaPdf" ? "pdf" : "word");
+      if (a === "numSheet") numSheet();
+      if (a === "numApply") numApply();
       if (a === "tabNew") tabNew();
       if (a === "tabRename") tabRename(act.dataset.id);
       if (a === "tabDel") tabDel(act.dataset.id);
@@ -1157,9 +1287,11 @@
   document.addEventListener("change", e => {
     if (e.target.id === "doneChk") { setDone(curSec().id, e.target.checked); return; }
     if (e.target.matches("input[data-op='chk']")) { onOp(e.target); return; }
-    if (e.target.matches("input[data-yname]")) { setAtt(yokDay, e.target.dataset.yname, e.target.checked); return; }
+    if (e.target.matches("input[data-ykey]")) { setAtt(yokDay, e.target.dataset.ykey, e.target.checked, e.target.dataset.yname); return; }
     if (e.target.id === "minDays") { const v = Math.max(1, parseInt(e.target.value, 10) || 1); settings.minDays = v; store("bhc27_settings", settings); if (fb.ok) fb.root.child("settings/minDays").set(v).catch(() => {}); addLog("Belge için en az gün sayısını " + v + " yaptı"); render(); return; }
     if (e.target.id === "belgeOnly") { belgeOnly = e.target.checked; render(); return; }
+    if (e.target.name === "numMode") { numPreview(); return; }
+    if (e.target.id === "imzaDay" || e.target.id === "masaN") { imzaSheet(true); return; }
     if (e.target.id === "xlsxFile") { const f = e.target.files[0]; e.target.value = ""; if (f) importRead(f); return; }
     if (e.target.id === "impSheet") { imp.sheet = e.target.value; importSheet(); return; }
     if (e.target.id === "impTarget") { const n = $("#impNameWrap"); if (n) n.hidden = e.target.value !== "__new"; return; }
@@ -1172,6 +1304,7 @@
   });
   document.addEventListener("input", e => {
     if (e.target.id === "yokQ") { yokQ = e.target.value; yokApplyFilter(); return; }
+    if (e.target.id === "numIn" || e.target.name === "numMode") { numPreview(); return; }
     onInput(e);
   });
   document.addEventListener("paste", e => {
@@ -1186,7 +1319,7 @@
     if (e.key === "Enter" && e.target.id === "yokQ") {
       e.preventDefault();
       const vis = [...document.querySelectorAll("#yokList li")].filter(li => li.style.display !== "none" && li.dataset.p !== "1");
-      if (vis.length === 1) { const cb = vis[0].querySelector("input"); setAtt(yokDay, cb.dataset.yname, true); }
+      if (vis.length === 1) { const cb = vis[0].querySelector("input"); setAtt(yokDay, cb.dataset.ykey, true, cb.dataset.yname); }
       else if (vis.length > 1) toast(vis.length + " kişi eşleşti; birine dokunun");
       else e.target.blur();
     }

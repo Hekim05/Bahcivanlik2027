@@ -65,21 +65,23 @@
         if (b.t === "tbl") {
           if (b.count) children.push(new Paragraph({ spacing: { after: 100 }, children: [new TextRun({ text: "Toplam: " + countRows(b) + " " + b.count, bold: true })] }));
           const n = (b.head || []).length || Math.max(...(b.rows || [[""]]).map(r => r.length));
-          const cell = (txt, shade, bold, span) => new TableCell({
+          const fs = b.big ? 32 : b.tall ? 22 : 18;
+          const cell = (txt, shade, bold, span, ci) => new TableCell({
             columnSpan: span || 1,
+            width: b.widthsPct && ci != null ? { size: b.widthsPct[ci], type: WidthType.PERCENTAGE } : undefined,
             shading: shade ? { type: ShadingType.CLEAR, color: "auto", fill: shade } : undefined,
             margins: { top: 40, bottom: 40, left: 80, right: 80 },
-            children: [new Paragraph({ children: runs(txt, { size: 18, bold: !!bold }) })]
+            children: [new Paragraph({ children: runs(txt, { size: fs, bold: !!bold }) })]
           });
           const rows = [];
-          if (b.head && b.head.length) rows.push(new TableRow({ tableHeader: true, children: b.head.map(h => cell(h, "E3EFE2", true)) }));
+          if (b.head && b.head.length) rows.push(new TableRow({ tableHeader: true, children: b.head.map((h, ci) => cell(h, "E3EFE2", true, 1, ci)) }));
           (b.rows || []).forEach(r => {
             if (isWeekRow(r)) rows.push(new TableRow({ children: [cell(r[0], "EEF3EA", true, n)] }));
             else {
               const shade = isRamazan(r) ? "FDF3DC" : null;
               const cells = [];
-              for (let i = 0; i < n; i++) cells.push(cell(r[i] || "", shade, false));
-              rows.push(new TableRow({ children: cells }));
+              for (let i = 0; i < n; i++) cells.push(cell(r[i] || "", shade, !!b.big && i === 0, 1, i));
+              rows.push(new TableRow({ children: cells, height: b.tall || b.big ? { value: b.big ? 900 : 560, rule: "atLeast" } : undefined }));
             }
           });
           children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows }));
@@ -130,7 +132,7 @@
             const head = b.head || [];
             const n = head.length || Math.max(...(b.rows || [[""]]).map(r => r.length));
             const maxLen = Array.from({ length: n }, (_, i) => Math.max(String(head[i] || "").length, ...(b.rows || []).filter(r => !isWeekRow(r)).map(r => String(r[i] || "").length)));
-            const widths = maxLen.map(l => (l <= 14 ? "auto" : "*"));
+            const widths = b.pdfWidths || maxLen.map(l => (l <= 14 ? "auto" : "*"));
             const body = [];
             if (head.length) body.push(head.map(h => ({ text: h, bold: true, fillColor: "#e3efe2" })));
             (b.rows || []).forEach(r => {
@@ -145,9 +147,10 @@
                 body.push(row);
               }
             });
-            content.push({ table: { headerRows: head.length ? 1 : 0, widths, body }, fontSize: 8.5,
-              layout: { hLineColor: () => "#cfcabd", vLineColor: () => "#cfcabd", hLineWidth: () => 0.5, vLineWidth: () => 0.5,
-                paddingTop: () => 3, paddingBottom: () => 3 }, margin: [0, 2, 0, 12] });
+            const padV = b.big ? 12 : b.tall ? 9 : 3;
+            content.push({ table: { headerRows: head.length ? 1 : 0, widths, body, dontBreakRows: true }, fontSize: b.big ? 16 : b.tall ? 11 : 8.5,
+              layout: { hLineColor: () => b.tall ? "#9a9a9a" : "#cfcabd", vLineColor: () => b.tall ? "#9a9a9a" : "#cfcabd", hLineWidth: () => 0.5, vLineWidth: () => 0.5,
+                paddingTop: () => padV, paddingBottom: () => padV }, margin: [0, 2, 0, 12] });
             break;
           }
           default: content.push({ text: b.x || "", margin: [0, 0, 0, 7] });
