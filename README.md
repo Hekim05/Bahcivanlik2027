@@ -6,7 +6,7 @@
 - Metin ve tablolar uygulama içinde düzenlenebilir; değişiklikler ortak veritabanı üzerinden herkese anında yansır
 - Bölüm tamamlama tikleri, tamamlanma şeridi ve sesli okunabilen "Son Durum" ekranı
 - Her bölüm veya tüm dosya Word, PDF ve Excel olarak indirilebilir
-- Ayarlar (⋯) menüsünden yeni sekme açılabilir ve Excel tablosu yüklenebilir; yüklemede varsayılan olarak yalnız ad-soyad sütunları alınır
+- Ayarlar (⚙️) menüsünden yeni sekme açılabilir ve Excel tablosu yüklenebilir; yüklemede varsayılan olarak yalnız ad-soyad sütunları alınır
 - Son Durum'da gün içinde kimlerin bağlandığı görünür
 - Android ve iPhone'a ana ekrana eklenerek uygulama gibi kullanılabilir (PWA)
 

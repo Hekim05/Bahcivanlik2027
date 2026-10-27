@@ -39,6 +39,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .nav-btn .ic{font-size:20px}
 .nav-btn.active{border-color:var(--green);background:var(--green-soft);font-weight:700}
 .nav-btn.done::after{content:"✓";position:absolute;top:4px;right:6px;width:18px;height:18px;border-radius:50%;background:var(--green);color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center}
+.nav-btn.ayar{border-style:dashed}
 .nav-btn.durum{border-color:var(--amber);background:var(--amber-soft)}
 
 main{max-width:960px;margin:0 auto;padding:8px 16px 24px}

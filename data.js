@@ -277,7 +277,7 @@ window.DEFAULT_DATA = {
     {
       id: "kursiyer", icon: "👥", title: "Kursiyerler", parts: [{
         id: "liste", title: "Kursiyer listesi", blocks: [
-          { t: "p", x: "Kursiyer listesini Ayarlar (⋯) → Excel'den yükle ile bu sekmeye aktarın. Liste ada göre A→Z sıralanır ve numaralanır; elle eklenen isimler de düzenleme bitince sıraya girer." },
+          { t: "p", x: "Kursiyer listesini Ayarlar (⚙️) → Excel'den yükle ile bu sekmeye aktarın. Liste ada göre A→Z sıralanır ve numaralanır; elle eklenen isimler de düzenleme bitince sıraya girer." },
           { t: "tbl", head: ["No", "Ad Soyad"], rows: [], count: "kursiyer", sort: true }
         ]
       }]

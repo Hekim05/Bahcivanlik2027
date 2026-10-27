@@ -106,7 +106,7 @@
     const nav = $("#nav");
     nav.innerHTML = data.sections.map(s =>
       `<button type="button" class="nav-btn ${view.sec === s.id ? "active" : ""} ${done[s.id] ? "done" : ""}" data-nav="${s.id}"><span class="ic">${s.icon}</span><span>${esc(s.title)}</span></button>`
-    ).join("") + `<button type="button" class="nav-btn durum ${view.sec === "durum" ? "active" : ""}" data-nav="durum"><span class="ic">📊</span><span>Son Durum</span></button>`;
+    ).join("") + `<button type="button" class="nav-btn durum ${view.sec === "durum" ? "active" : ""}" data-nav="durum"><span class="ic">📊</span><span>Son Durum</span></button><button type="button" class="nav-btn ayar" id="navSettings"><span class="ic">⚙️</span><span>Ayarlar</span></button>`;
   }
   function go(secId) {
     if (editing) finishEdit();
@@ -560,7 +560,7 @@
   function menu() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
-    openSheet(`<h4>Menü</h4><p>Bağlantı: ${esc($("#syncTxt").textContent)}. ${fb.ok ? "Yaptığınız her değişiklik bu uygulamayı açan herkeste anında görünür." : "Ortak kayda bağlı değil; değişiklikler bu cihazda tutuluyor."}</p>
+    openSheet(`<h4>⚙️ Ayarlar</h4><p>Bağlantı: ${esc($("#syncTxt").textContent)}. ${fb.ok ? "Yaptığınız her değişiklik bu uygulamayı açan herkeste anında görünür." : "Ortak kayda bağlı değil; değişiklikler bu cihazda tutuluyor."}</p>
       <button type="button" class="opt" data-act="name">👤 Adım: ${esc(me || "belirtilmedi")}<small>Değişiklik geçmişinde görünen ad</small></button>
       <button type="button" class="opt" data-act="tabs">🗂️ Sekmeler<small>Yeni sekme aç, adını değiştir veya sil</small></button>
       <button type="button" class="opt" data-act="xlsx">📥 Excel'den yükle<small>Bir tabloyu yeni ya da mevcut sekmeye aktar</small></button>
@@ -770,7 +770,7 @@
     const run = t.closest("[data-run]"); if (run) { runExport(run.dataset.run, run.dataset.scope); return; }
     const op = t.closest("button[data-op]"); if (op) { onOp(op); return; }
     if (t.closest("[data-close]") || t === $("#sheetBack")) { closeSheet(); return; }
-    if (t.closest("#menuBtn") || t.closest("#syncBtn")) { menu(); return; }
+    if (t.closest("#menuBtn") || t.closest("#syncBtn") || t.closest("#navSettings")) { menu(); return; }
     if (t.closest("#speakBtn")) { speak(); return; }
     if (t.closest("#stopBtn")) { if ("speechSynthesis" in window) speechSynthesis.cancel(); return; }
     const act = t.closest("[data-act]");
