@@ -18,6 +18,11 @@
 
   let data = load(LS.data);
   if (!data || !data.sections || data.version !== DEF.version) data = clone(DEF);
+  DEF.sections.forEach((ds, i) => {
+    if (data.sections.some(s => s.id === ds.id)) return;
+    const prev = i > 0 ? data.sections.findIndex(s => s.id === DEF.sections[i - 1].id) : -1;
+    data.sections.splice(prev + 1, 0, clone(ds));
+  });
   let done = load(LS.done) || {};
   let me = localStorage.getItem(LS.me) || "";
   let dirty = new Set(load(LS.dirty) || []);
@@ -167,7 +172,9 @@
     const head = b.head || [];
     const n = head.length;
     const W = window.Exporter;
-    let h = `<div class="tbl-wrap"><table><thead><tr>${head.map((c, j) => `<th${editing ? ` contenteditable="true" data-bi="${bi}" data-k="head" data-j="${j}"` : ""}>${esc(c)}</th>`).join("")}${editing ? `<th class="row-ops"></th>` : ""}</tr></thead><tbody>`;
+    const cnt = b.count ? (b.rows || []).filter(r => r.some((c, j) => String(c || "").trim() && !(j === 0 && /^no$/i.test(head[0] || "")))).length : 0;
+    let h = b.count ? `<div class="count-bar"><b>Toplam: ${cnt}</b> ${esc(b.count)}${b.sort ? ` <span class="muted">· ada göre A→Z</span>` : ""}</div>` : "";
+    h += `<div class="tbl-wrap"><table><thead><tr>${head.map((c, j) => `<th${editing ? ` contenteditable="true" data-bi="${bi}" data-k="head" data-j="${j}"` : ""}>${esc(c)}</th>`).join("")}${editing ? `<th class="row-ops"></th>` : ""}</tr></thead><tbody>`;
     (b.rows || []).forEach((r, ri) => {
       const week = W.isWeekRow(r), ram = W.isRamazan(r);
       if (!editing && week) { h += `<tr class="week"><td colspan="${n}">${phHtml(r[0])}</td></tr>`; return; }
@@ -179,6 +186,7 @@
       if (editing) h += `<td class="row-ops"><button type="button" class="mini" data-op="row-add" data-bi="${bi}" data-i="${ri}" aria-label="Altına satır ekle">＋</button> <button type="button" class="mini del" data-op="row-del" data-bi="${bi}" data-i="${ri}" aria-label="Satırı sil">✕</button></td>`;
       h += `</tr>`;
     });
+    if (!(b.rows || []).length) h += `<tr><td colspan="${n + (editing ? 1 : 0)}" class="muted">Henüz kayıt yok.</td></tr>`;
     h += `</tbody></table></div>`;
     if (editing) h += `<button type="button" class="add-line" data-op="row-end" data-bi="${bi}">+ Satır ekle</button> <button type="button" class="add-line" data-op="col-add" data-bi="${bi}">+ Sütun</button> ${n > 1 ? `<button type="button" class="add-line" data-op="col-del" data-bi="${bi}" style="border-color:var(--red);color:var(--red)">− Son sütunu sil</button>` : ""}`;
     return h;
@@ -235,6 +243,7 @@
   function finishEdit() {
     if (!editing) return;
     editing = false;
+    if (curPart().blocks.some(b => b.t === "tbl" && b.sort)) { curPart().blocks.forEach(tidyTable); store(LS.data, data); }
     const s = curSec(), p = curPart();
     if (editChanged) { flushWrite(curKey()); addLog(`${s.title} › ${p.title} düzenlendi`); toast("Kaydedildi ✓"); }
     if (remoteWhileEditing) toast("Bu sayfada başka biri de değişiklik yaptı; son kaydedilen hâl geçerli.", 4000);
@@ -445,6 +454,7 @@
             <div><b>${p.secDone}/${p.secTotal}</b> bölüm tamamlandı</div>
             <div><b>${p.chkDone}/${p.chkTotal}</b> açık nokta işaretlendi</div>
             <div><b>${S.ph}</b> doldurulacak [ ] alan kaldı</div>
+            ${kursiyerCount() !== null ? `<div><b>${kursiyerCount()}</b> kursiyer kayıtlı</div>` : ""}
             ${last ? `<div class="muted">Son değişiklik: ${esc(last.who)} · ${timeAgo(last.at)}</div>` : ""}
           </div>
         </div>
@@ -478,6 +488,7 @@
     const S = statusSummary(), p = S.p;
     const parts = [`Bahçıvanlık Eğitimi 2027 hazırlığı yüzde ${p.pct} tamamlandı.`];
     parts.push(`${p.secTotal} bölümden ${p.secDone} tanesi tamamlandı.`);
+    if (kursiyerCount()) parts.push(`Kursiyer listesinde ${kursiyerCount()} kişi kayıtlı.`);
     if (S.doneSecs.length) parts.push(`Tamamlanan bölümler: ${S.doneSecs.join(", ")}.`);
     if (S.openSecs.length) parts.push(`Devam eden bölümler: ${S.openSecs.join(", ")}.`);
     if (S.openItems.length) {
@@ -586,6 +597,23 @@
     renderNav(); render(); toast("Yedek yüklendi ✓");
   }
 
+  /* ---------- sıralı listeler ---------- */
+  function tidyTable(b) {
+    if (!b || b.t !== "tbl" || !b.sort) return;
+    const head = b.head || [];
+    const hasNo = /^no$/i.test(head[0] || "");
+    const nameCol = hasNo ? 1 : 0;
+    b.rows = (b.rows || []).filter(r => r.some((c, j) => String(c || "").trim() && !(hasNo && j === 0)));
+    b.rows.sort((x, y) => String(x[nameCol] || "").localeCompare(String(y[nameCol] || ""), "tr", { sensitivity: "base" }));
+    if (hasNo) b.rows.forEach((r, i) => { r[0] = String(i + 1); });
+  }
+  function kursiyerCount() {
+    const s = secById("kursiyer"); if (!s) return null;
+    let n = 0;
+    s.parts.forEach(p => p.blocks.forEach(b => { if (b.t === "tbl") n += (b.rows || []).filter(r => r.slice(/^no$/i.test((b.head || [])[0] || "") ? 1 : 0).some(c => String(c || "").trim())).length; }));
+    return n;
+  }
+
   /* ---------- ek sekmeler ---------- */
   let remoteParts = {};
   function customMap() {
@@ -683,10 +711,12 @@
       <div class="lbl">Alınacak sütunlar</div>
       ${!nameCols.length ? `<p style="margin:4px 0">Ad-soyad sütunu bulunamadı; almak istediğiniz sütunları işaretleyin.</p>` : `<p style="margin:4px 0">Yalnız ad-soyad sütunları işaretli. Telefon, T.C. kimlik numarası gibi kişisel bilgileri eklemeyin; bu sayfa giriş gerektirmiyor.</p>`}
       ${head.map((h, i) => `<label class="cb"><input type="checkbox" class="impCol" value="${i}" ${nameCols.includes(i) ? "checked" : ""}> ${esc(h)} <span class="muted" style="font-size:12px">${esc((body[0] || [])[i] || "")}</span></label>`).join("")}
+      ${nameCols.length > 1 ? `<label class="cb"><input type="checkbox" id="impMerge" checked> Ad ve soyadı tek "Ad Soyad" sütununda birleştir</label>` : ""}
       <label class="cb"><input type="checkbox" id="impNo" checked> Başa sıra numarası ekle</label>
       <div class="lbl">Nereye yüklensin?</div>
-      <select id="impTarget"><option value="__new">Yeni sekme</option>${customs.map(s => `<option value="${s.id}">${esc(s.title)} (içeriği değişir)</option>`).join("")}</select>
-      <div id="impNameWrap"><div class="lbl">Yeni sekmenin adı</div><input type="text" id="impName" value="${esc(defName)}"></div>
+      <select id="impTarget">${secById("kursiyer") ? `<option value="kursiyer" ${nameCols.length ? "selected" : ""}>👥 Kursiyerler (liste yenilenir)</option>` : ""}<option value="__new" ${nameCols.length ? "" : "selected"}>Yeni sekme</option>${customs.map(s => `<option value="${s.id}">${esc(s.title)} (içeriği değişir)</option>`).join("")}</select>
+      <label class="cb"><input type="checkbox" id="impSort" ${nameCols.length ? "checked" : ""}> Ada göre A→Z sırala ve toplamı göster</label>
+      <div id="impNameWrap" ${nameCols.length && secById("kursiyer") ? "hidden" : ""}><div class="lbl">Yeni sekmenin adı</div><input type="text" id="impName" value="${esc(defName)}"></div>
       <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button><button type="button" class="tbtn primary" data-act="impRun">Yükle</button></div>`);
   }
   function importRun() {
@@ -695,18 +725,31 @@
     const withNo = $("#impNo").checked;
     const target = $("#impTarget").value;
     const head0 = (imp.rows[imp.headIdx] || []).map((h, i) => h || ("Sütun " + (i + 1)));
-    const body = imp.rows.slice(imp.headIdx + 1).map(r => cols.map(i => r[i] || "")).filter(r => r.some(Boolean));
-    const head = (withNo ? ["No"] : []).concat(cols.map(i => head0[i]));
+    let body = imp.rows.slice(imp.headIdx + 1).map(r => cols.map(i => r[i] || "")).filter(r => r.some(Boolean));
+    let heads = cols.map(i => head0[i]);
+    const mergeEl = $("#impMerge");
+    if (mergeEl && mergeEl.checked) {
+      const nm = cols.map((c, k) => isNameCol(head0[c]) ? k : -1).filter(k => k >= 0);
+      if (nm.length > 1) {
+        body = body.map(r => { const name = nm.map(k => r[k]).filter(Boolean).join(" ").replace(/\s+/g, " ").trim(); return [name].concat(r.filter((_, k) => !nm.includes(k))); });
+        heads = ["Ad Soyad"].concat(heads.filter((_, k) => !nm.includes(k)));
+      }
+    }
+    const head = (withNo ? ["No"] : []).concat(heads);
     const rows = body.map((r, n) => (withNo ? [String(n + 1)] : []).concat(r));
     const when = new Date().toLocaleDateString("tr-TR");
-    const blocks = [{ t: "p", x: `${imp.file} dosyasından ${rows.length} kayıt yüklendi (${when}).` }, { t: "tbl", head, rows }];
+    const sorted = $("#impSort").checked;
+    const tbl = { t: "tbl", head, rows };
+    if (sorted) { tbl.sort = true; tbl.count = target === "kursiyer" ? "kursiyer" : "kayıt"; tidyTable(tbl); }
+    const blocks = [{ t: "p", x: `${imp.file} dosyasından ${tbl.rows.length} kayıt yüklendi (${when}).` }, tbl];
     let sec;
     if (target === "__new") {
       const name = ($("#impName").value || "").trim() || imp.file;
       sec = createSection(name, "👥", blocks);
     } else {
       sec = secById(target); if (!sec) return;
-      if (!confirm(`"${sec.title}" sekmesinin içeriği bu tabloyla değiştirilecek. Devam edilsin mi?`)) return;
+      const hasRows = sec.parts[0].blocks.some(b => b.t === "tbl" && (b.rows || []).length);
+      if (hasRows && !confirm(`"${sec.title}" sekmesindeki mevcut liste bu tabloyla değiştirilecek. Devam edilsin mi?`)) return;
       sec.parts[0].blocks = blocks;
       const k = keyOf(sec, sec.parts[0]);
       dirty.add(k); store(LS.dirty, [...dirty]); store(LS.data, data);

@@ -76,6 +76,8 @@ tr.week td{background:var(--week);font-weight:700}
 tr.ramazan td{background:var(--ramazan)}
 tr.ramazan td:last-child{color:var(--amber);font-weight:600}
 td.empty-cell::after{content:"—";color:var(--muted)}
+.count-bar{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;background:var(--green-soft);border-radius:10px;padding:10px 12px;margin:8px 0 4px;font-size:15px}
+.count-bar b{font-size:18px;color:var(--green)}
 .chk{list-style:none;padding:0;margin:0 0 12px}
 .chk li{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px dashed var(--line)}
 .chk input{width:22px;height:22px;margin-top:1px;accent-color:var(--green);flex:0 0 auto}

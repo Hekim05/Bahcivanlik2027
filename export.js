@@ -15,6 +15,7 @@
 
   const isWeekRow = r => r.length > 1 && /hafta/i.test(r[0] || "") && r.slice(1).every(c => !String(c || "").trim());
   const isRamazan = r => r.some(c => /ramazan/i.test(String(c || "")));
+  const countRows = b => (b.rows || []).filter(r => r.slice(/^no$/i.test((b.head || [])[0] || "") ? 1 : 0).some(c => String(c || "").trim())).length;
   const lines = x => String(x == null ? "" : x).split("\n");
 
   function blockLines(b) {
@@ -62,6 +63,7 @@
       }
       part.blocks.forEach(b => {
         if (b.t === "tbl") {
+          if (b.count) children.push(new Paragraph({ spacing: { after: 100 }, children: [new TextRun({ text: "Toplam: " + countRows(b) + " " + b.count, bold: true })] }));
           const n = (b.head || []).length || Math.max(...(b.rows || [[""]]).map(r => r.length));
           const cell = (txt, shade, bold, span) => new TableCell({
             columnSpan: span || 1,
@@ -124,6 +126,7 @@
           case "ol": content.push({ ol: (b.items || []).map(i => i || " "), margin: [0, 0, 0, 8] }); break;
           case "chk": content.push({ stack: blockLines(b), margin: [0, 0, 0, 8] }); break;
           case "tbl": {
+            if (b.count) content.push({ text: "Toplam: " + countRows(b) + " " + b.count, bold: true, margin: [0, 2, 0, 6] });
             const head = b.head || [];
             const n = head.length || Math.max(...(b.rows || [[""]]).map(r => r.length));
             const maxLen = Array.from({ length: n }, (_, i) => Math.max(String(head[i] || "").length, ...(b.rows || []).filter(r => !isWeekRow(r)).map(r => String(r[i] || "").length)));
@@ -179,6 +182,7 @@
       part.blocks.forEach(b => {
         if (b.t === "tbl") {
           const head = b.head || [];
+          if (b.count) aoa.push(["Toplam: " + countRows(b) + " " + b.count]);
           if (head.length) aoa.push(head.slice());
           (b.rows || []).forEach(r => {
             if (isWeekRow(r)) { merges.push({ s: { r: aoa.length, c: 0 }, e: { r: aoa.length, c: Math.max(head.length - 1, 0) } }); aoa.push([r[0]]); }
