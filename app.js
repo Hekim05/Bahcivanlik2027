@@ -2,6 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
+  const APP_VERSION = "7 · 27 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -613,7 +614,8 @@
     const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
     openSheet(`<h4>⚙️ Ayarlar</h4><p>Bağlantı: ${esc($("#syncTxt").textContent)}. ${fb.ok ? "Yaptığınız her değişiklik bu uygulamayı açan herkeste anında görünür." : "Ortak kayda bağlı değil; değişiklikler bu cihazda tutuluyor."}</p>
       <button type="button" class="opt" data-act="name">👤 Adım: ${esc(me || "belirtilmedi")}<small>Değişiklik geçmişinde görünen ad</small></button>
-      <button type="button" class="opt" data-act="tabs">🗂️ Sekmeler<small>Yeni sekme aç, adını değiştir veya sil</small></button>
+      <button type="button" class="opt" data-act="tabNew" style="border-color:var(--green);background:var(--green-soft)">➕ Yeni sekme ekle<small>Adını yazın, boş tabloyla açılır</small></button>
+      <button type="button" class="opt" data-act="tabs">🗂️ Eklenen sekmeler<small>Adını değiştir veya sil</small></button>
       <button type="button" class="opt" data-act="xlsx">📥 Excel'den yükle<small>Bir tabloyu yeni ya da mevcut sekmeye aktar</small></button>
       <button type="button" class="opt" data-run="word" data-scope="all">📝 Tüm dosya – Word</button>
       <button type="button" class="opt" data-run="pdf" data-scope="all">📄 Tüm dosya – PDF</button>
@@ -623,6 +625,7 @@
       <button type="button" class="opt" data-act="backup">💾 Yedek indir<small>Tüm içerik ve tikler (JSON)</small></button>
       <button type="button" class="opt" data-act="restore">📂 Yedekten geri yükle<small>Herkes için geçerli olur</small></button>
       <button type="button" class="opt" data-act="reset">↺ İlk taslağa dön<small>Tüm düzenlemeler silinir, herkes için</small></button>
+      <p style="margin-top:10px;font-size:12px">Sürüm ${APP_VERSION}</p>
       <div class="row"><button type="button" class="tbtn" data-close>Kapat</button></div>`);
   }
   function askName(force) {
