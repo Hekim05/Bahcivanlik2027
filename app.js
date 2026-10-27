@@ -1,0 +1,559 @@
+/* Bahçıvanlık Eğitimi 2027 – ortak hazırlık uygulaması */
+(function () {
+  "use strict";
+  const DB_ROOT = "bahcivanlik2027";
+  const FB_CFG = {
+    apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
+    databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "kent-bostanlari"
+  };
+  const LS = { data: "bhc27_data", done: "bhc27_done", me: "bhc27_me", dirty: "bhc27_dirty", view: "bhc27_view", log: "bhc27_log" };
+  const DEF = window.DEFAULT_DATA;
+  const $ = s => document.querySelector(s);
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const load = k => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
+  const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const phHtml = s => esc(s).replace(/\[[^\]\n]*\]/g, m => `<span class="ph">${m}</span>`);
+
+  let data = load(LS.data);
+  if (!data || !data.sections || data.version !== DEF.version) data = clone(DEF);
+  let done = load(LS.done) || {};
+  let me = localStorage.getItem(LS.me) || "";
+  let dirty = new Set(load(LS.dirty) || []);
+  let log = load(LS.log) || [];
+  let view = load(LS.view) || { sec: "program", part: {} };
+  let editing = false, editChanged = false, remoteWhileEditing = false;
+  const fb = { db: null, ok: false, connected: false, root: null };
+  const writeTimers = {};
+  let installEvt = null;
+
+  /* ---------- yardımcılar ---------- */
+  const keyOf = (s, p) => s.id + "__" + p.id;
+  const secById = id => data.sections.find(s => s.id === id);
+  function eachPart(fn) { data.sections.forEach(s => s.parts.forEach(p => fn(s, p, keyOf(s, p)))); }
+  function partByKey(k) { let r = null; eachPart((s, p, key) => { if (key === k) r = p; }); return r; }
+  function curSec() { return secById(view.sec) || data.sections[0]; }
+  function curPart() { const s = curSec(); const pid = (view.part || {})[s.id]; return s.parts.find(p => p.id === pid) || s.parts[0]; }
+  const curKey = () => keyOf(curSec(), curPart());
+  const toArr = v => Array.isArray(v) ? v : (v && typeof v === "object" ? Object.keys(v).sort((a, b) => a - b).map(k => v[k]) : []);
+  function normBlocks(v) {
+    return toArr(v).filter(Boolean).map(b => {
+      const o = { ...b };
+      if (o.t === "ul" || o.t === "ol") o.items = toArr(o.items).map(x => x == null ? "" : String(x));
+      if (o.t === "chk") o.items = toArr(o.items).filter(Boolean).map(i => ({ x: i.x || "", done: !!i.done }));
+      if (o.t === "tbl") {
+        o.head = toArr(o.head).map(x => x == null ? "" : String(x));
+        const n = o.head.length;
+        o.rows = toArr(o.rows).map(r => { const a = toArr(r).map(x => x == null ? "" : String(x)); while (a.length < n) a.push(""); return a; });
+      }
+      if ("x" in o && o.x == null) o.x = "";
+      return o;
+    });
+  }
+  function toast(msg, ms) {
+    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), ms || 2600);
+  }
+  function timeAgo(ts) {
+    if (!ts) return "";
+    const d = (Date.now() - ts) / 1000;
+    if (d < 60) return "az önce";
+    if (d < 3600) return Math.floor(d / 60) + " dk önce";
+    if (d < 86400) return Math.floor(d / 3600) + " sa önce";
+    return new Date(ts).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+
+  /* ---------- ilerleme ---------- */
+  function checklistItems() {
+    const out = [];
+    eachPart((s, p) => p.blocks.forEach(b => { if (b.t === "chk") (b.items || []).forEach(i => out.push(i)); }));
+    return out;
+  }
+  function placeholderCount(sec) {
+    let n = 0;
+    sec.parts.forEach(p => p.blocks.forEach(b => {
+      const txt = b.t === "tbl" ? [].concat(b.head || [], ...(b.rows || [])).join("\n") : (b.t === "ul" || b.t === "ol") ? (b.items || []).join("\n") : b.t === "chk" ? "" : (b.x || "");
+      n += (txt.match(/\[[^\]\n]*\]/g) || []).length;
+    }));
+    return n;
+  }
+  function progress() {
+    const items = checklistItems();
+    const secDone = data.sections.filter(s => done[s.id]).length;
+    const total = data.sections.length + items.length;
+    const got = secDone + items.filter(i => i.done).length;
+    return { pct: total ? Math.round(got * 100 / total) : 0, secDone, secTotal: data.sections.length, chkDone: items.filter(i => i.done).length, chkTotal: items.length, got, total };
+  }
+  function renderProgress() {
+    const p = progress();
+    $("#progFill").style.width = p.pct + "%";
+    $("#progTxt").textContent = "%" + p.pct + " · " + p.got + "/" + p.total;
+  }
+
+  /* ---------- gezinme ---------- */
+  function renderNav() {
+    const nav = $("#nav");
+    nav.innerHTML = data.sections.map(s =>
+      `<button type="button" class="nav-btn ${view.sec === s.id ? "active" : ""} ${done[s.id] ? "done" : ""}" data-nav="${s.id}"><span class="ic">${s.icon}</span><span>${esc(s.title)}</span></button>`
+    ).join("") + `<button type="button" class="nav-btn durum ${view.sec === "durum" ? "active" : ""}" data-nav="durum"><span class="ic">📊</span><span>Son Durum</span></button>`;
+  }
+  function go(secId) {
+    if (editing) finishEdit();
+    view.sec = secId; store(LS.view, view);
+    renderNav(); render();
+    window.scrollTo({ top: $("#nav").offsetTop - 70, behavior: "smooth" });
+  }
+
+  /* ---------- bölüm görünümü ---------- */
+  function render() {
+    renderProgress();
+    if (view.sec === "durum") return renderDurum();
+    const s = curSec(), p = curPart();
+    const multi = s.parts.length > 1;
+    $("#main").innerHTML = `
+      <section class="card">
+        <div class="sec-head">
+          <h2 class="sec-title">${s.icon} ${esc(s.title)}</h2>
+          <label class="done-toggle ${done[s.id] ? "is-done" : ""}"><input type="checkbox" id="doneChk" ${done[s.id] ? "checked" : ""}> Tamamlandı</label>
+        </div>
+        ${multi ? `<div class="parts">${s.parts.map(x => `<button type="button" class="chip ${x.id === p.id ? "active" : ""}" data-part="${x.id}">${esc(x.title)}</button>`).join("")}</div>` : ""}
+        <div class="tools">
+          <button type="button" class="tbtn ${editing ? "primary" : ""}" id="editBtn">${editing ? "✓ Düzenlemeyi bitir" : "✏️ Düzenle"}</button>
+          <button type="button" class="tbtn word" data-exp="word">📝 Word</button>
+          <button type="button" class="tbtn pdf" data-exp="pdf">📄 PDF</button>
+          <button type="button" class="tbtn excel" data-exp="excel">📊 Excel</button>
+        </div>
+        ${editing ? `<div class="editing-note">Düzenleme açık. Metne ve tablo hücrelerine dokunup yazın; değişiklikler kaydedilir ve herkese yansır.</div>` : ""}
+        <div class="doc" id="doc">${renderBlocks(p.blocks)}</div>
+      </section>`;
+  }
+
+  function renderBlocks(blocks) {
+    return blocks.map((b, bi) => {
+      const ce = editing ? ` contenteditable="true" data-bi="${bi}" data-k="x"` : "";
+      const txt = v => editing ? esc(v) : phHtml(v);
+      switch (b.t) {
+        case "h": return `<h3${ce}>${txt(b.x)}</h3>`;
+        case "b": return `<p class="b"${ce}>${txt(b.x)}</p>`;
+        case "c": return `<div class="c"${ce}>${txt(b.x)}</div>`;
+        case "r": return `<div class="r"${ce}>${txt(b.x)}</div>`;
+        case "p": return `<p${ce}>${txt(b.x)}</p>`;
+        case "ul": case "ol": return renderList(b, bi);
+        case "chk": return renderChk(b, bi);
+        case "tbl": return renderTable(b, bi);
+        default: return "";
+      }
+    }).join("");
+  }
+  function renderList(b, bi) {
+    const tag = b.t;
+    if (!editing) return `<${tag}>${(b.items || []).map(i => `<li>${i ? phHtml(i) : "&nbsp;"}</li>`).join("")}</${tag}>`;
+    return `<div>${(b.items || []).map((i, ii) => `<div class="li-edit"><span>${tag === "ol" ? (ii + 1) + "." : "•"}</span><div contenteditable="true" data-bi="${bi}" data-k="item" data-i="${ii}">${esc(i)}</div><button type="button" class="mini del" data-op="li-del" data-bi="${bi}" data-i="${ii}" aria-label="Sil">✕</button></div>`).join("")}
+      <button type="button" class="add-line" data-op="li-add" data-bi="${bi}">+ Madde ekle</button></div>`;
+  }
+  function renderChk(b, bi) {
+    return `<ul class="chk">${(b.items || []).map((i, ii) => `<li class="${i.done ? "done" : ""}"><input type="checkbox" data-op="chk" data-bi="${bi}" data-i="${ii}" ${i.done ? "checked" : ""} aria-label="Tamamlandı">${editing
+      ? `<div style="flex:1" contenteditable="true" data-bi="${bi}" data-k="chk" data-i="${ii}">${esc(i.x)}</div><button type="button" class="mini del" data-op="chk-del" data-bi="${bi}" data-i="${ii}" aria-label="Sil">✕</button>`
+      : `<span>${phHtml(i.x)}</span>`}</li>`).join("")}</ul>
+      ${editing ? `<button type="button" class="add-line" data-op="chk-add" data-bi="${bi}">+ Madde ekle</button>` : ""}`;
+  }
+  function renderTable(b, bi) {
+    const head = b.head || [];
+    const n = head.length;
+    const W = window.Exporter;
+    let h = `<div class="tbl-wrap"><table><thead><tr>${head.map((c, j) => `<th${editing ? ` contenteditable="true" data-bi="${bi}" data-k="head" data-j="${j}"` : ""}>${esc(c)}</th>`).join("")}${editing ? `<th class="row-ops"></th>` : ""}</tr></thead><tbody>`;
+    (b.rows || []).forEach((r, ri) => {
+      const week = W.isWeekRow(r), ram = W.isRamazan(r);
+      if (!editing && week) { h += `<tr class="week"><td colspan="${n}">${phHtml(r[0])}</td></tr>`; return; }
+      h += `<tr class="${week ? "week" : ""} ${ram ? "ramazan" : ""}">`;
+      for (let j = 0; j < n; j++) {
+        const v = r[j] || "";
+        h += editing ? `<td contenteditable="true" data-bi="${bi}" data-k="cell" data-i="${ri}" data-j="${j}">${esc(v)}</td>` : `<td>${phHtml(v)}</td>`;
+      }
+      if (editing) h += `<td class="row-ops"><button type="button" class="mini" data-op="row-add" data-bi="${bi}" data-i="${ri}" aria-label="Altına satır ekle">＋</button> <button type="button" class="mini del" data-op="row-del" data-bi="${bi}" data-i="${ri}" aria-label="Satırı sil">✕</button></td>`;
+      h += `</tr>`;
+    });
+    h += `</tbody></table></div>`;
+    if (editing) h += `<button type="button" class="add-line" data-op="row-end" data-bi="${bi}">+ Satır ekle</button>`;
+    return h;
+  }
+
+  /* ---------- düzenleme ---------- */
+  function partChanged(immediate) {
+    const k = curKey();
+    editChanged = true;
+    dirty.add(k); store(LS.dirty, [...dirty]);
+    store(LS.data, data);
+    renderProgress();
+    queueWrite(k, immediate);
+  }
+  function onInput(e) {
+    const el = e.target.closest("[contenteditable][data-k]");
+    if (!el) return;
+    const p = curPart(), b = p.blocks[+el.dataset.bi];
+    if (!b) return;
+    const v = el.innerText.replace(/\n$/, "");
+    const k = el.dataset.k, i = +el.dataset.i, j = +el.dataset.j;
+    if (k === "x") b.x = v;
+    else if (k === "item") b.items[i] = v;
+    else if (k === "chk") b.items[i].x = v;
+    else if (k === "head") b.head[j] = v;
+    else if (k === "cell") b.rows[i][j] = v;
+    partChanged(false);
+  }
+  function onOp(btn) {
+    const op = btn.dataset.op, p = curPart(), b = p.blocks[+btn.dataset.bi], i = +btn.dataset.i;
+    if (!b) return;
+    const blank = () => (b.head || []).map(() => "");
+    if (op === "chk") {
+      b.items[i].done = btn.checked;
+      partChanged(true);
+      addLog((btn.checked ? "İşaretledi: " : "İşareti kaldırdı: ") + b.items[i].x);
+      if (!editing) render(); else renderProgress();
+      renderNav();
+      return;
+    }
+    if (op === "li-add") b.items.push("");
+    if (op === "li-del") b.items.splice(i, 1);
+    if (op === "chk-add") b.items.push({ x: "", done: false });
+    if (op === "chk-del") b.items.splice(i, 1);
+    if (op === "row-add") b.rows.splice(i + 1, 0, blank());
+    if (op === "row-del") { if (!confirm("Bu satır silinsin mi?")) return; b.rows.splice(i, 1); }
+    if (op === "row-end") b.rows.push(blank());
+    partChanged(true);
+    render();
+  }
+  function startEdit() { editing = true; editChanged = false; remoteWhileEditing = false; render(); }
+  function finishEdit() {
+    if (!editing) return;
+    editing = false;
+    const s = curSec(), p = curPart();
+    if (editChanged) { flushWrite(curKey()); addLog(`${s.title} › ${p.title} düzenlendi`); toast("Kaydedildi ✓"); }
+    if (remoteWhileEditing) toast("Bu sayfada başka biri de değişiklik yaptı; son kaydedilen hâl geçerli.", 4000);
+    editChanged = false; remoteWhileEditing = false;
+  }
+
+  /* ---------- Firebase ortak kayıt ---------- */
+  function setSync(state, txt) {
+    $("#syncDot").className = "dot " + (state === "on" ? "on" : state === "off" ? "off" : "");
+    $("#syncTxt").textContent = txt;
+  }
+  function queueWrite(k, immediate) {
+    if (!fb.ok) return;
+    clearTimeout(writeTimers[k]);
+    writeTimers[k] = setTimeout(() => flushWrite(k), immediate ? 0 : 700);
+  }
+  function flushWrite(k) {
+    clearTimeout(writeTimers[k]);
+    if (!fb.ok) return;
+    const p = partByKey(k); if (!p) return;
+    const snapshot = JSON.stringify(p.blocks);
+    fb.root.child("parts/" + k).set(JSON.parse(snapshot)).then(() => {
+      if (JSON.stringify(p.blocks) === snapshot) { dirty.delete(k); store(LS.dirty, [...dirty]); }
+    }).catch(err => toast("Kaydedilemedi: " + err.message, 4000));
+    fb.root.child("meta/updated").set({ who: me || "?", at: firebase.database.ServerValue.TIMESTAMP }).catch(() => {});
+  }
+  function addLog(what) {
+    const entry = { who: me || "Bilinmeyen", what: String(what).slice(0, 160), at: Date.now() };
+    if (fb.ok) {
+      fb.root.child("log").push({ ...entry, at: firebase.database.ServerValue.TIMESTAMP }).catch(() => {});
+    } else {
+      log.unshift(entry); log = log.slice(0, 30); store(LS.log, log);
+      if (view.sec === "durum") render();
+    }
+  }
+  function setDone(secId, val) {
+    done[secId] = val; if (!val) delete done[secId];
+    store(LS.done, done);
+    if (fb.ok) fb.root.child("done/" + secId).set(val ? true : null).catch(() => {});
+    const s = secById(secId);
+    addLog(`${s ? s.title : secId} ${val ? "tamamlandı olarak işaretlendi" : "yeniden açıldı"}`);
+    renderNav(); render();
+  }
+
+  function fbInit() {
+    if (!window.firebase || !firebase.database) { setSync("off", "Çevrimdışı"); return; }
+    try {
+      firebase.initializeApp(FB_CFG);
+      fb.db = firebase.database();
+      fb.root = fb.db.ref(DB_ROOT);
+    } catch (e) { setSync("off", "Yalnız bu cihaz"); return; }
+    const authReady = (firebase.auth ? firebase.auth().signInAnonymously().catch(() => null) : Promise.resolve());
+    fb.db.ref(".info/connected").on("value", s => {
+      fb.connected = !!s.val();
+      if (fb.ok) setSync(fb.connected ? "on" : "off", fb.connected ? "Canlı · ortak" : "Çevrimdışı");
+    });
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("zaman aşımı")), 15000));
+    Promise.race([authReady.then(() => fb.root.child("meta/seeded").once("value")), timeout]).then(snap => {
+      fb.ok = true;
+      if (!snap.val()) {
+        const parts = {}; eachPart((s, p, k) => { parts[k] = p.blocks; });
+        return fb.root.update({ parts, done, "meta/seeded": true, "meta/created": firebase.database.ServerValue.TIMESTAMP })
+          .then(() => { dirty.clear(); store(LS.dirty, []); });
+      }
+      const upd = {};
+      dirty.forEach(k => { const p = partByKey(k); if (p) upd["parts/" + k] = p.blocks; });
+      if (Object.keys(upd).length) return fb.root.update(upd).then(() => { dirty.clear(); store(LS.dirty, []); });
+    }).then(() => {
+      setSync(fb.connected ? "on" : "off", fb.connected ? "Canlı · ortak" : "Çevrimdışı");
+      listen();
+    }).catch(err => {
+      fb.ok = false;
+      setSync("off", "Yalnız bu cihaz");
+      console.warn("Firebase:", err);
+      toast("Ortak kayda bağlanılamadı; değişiklikler şimdilik yalnız bu cihazda.", 4500);
+    });
+  }
+  function listen() {
+    fb.root.child("parts").on("value", s => {
+      const v = s.val() || {};
+      let any = false, cur = false;
+      Object.keys(v).forEach(k => {
+        const p = partByKey(k);
+        if (!p || dirty.has(k)) return;
+        const blocks = normBlocks(v[k]);
+        if (JSON.stringify(blocks) === JSON.stringify(p.blocks)) return;
+        if (editing && k === curKey()) { remoteWhileEditing = true; return; }
+        p.blocks = blocks; any = true;
+        if (k === curKey()) cur = true;
+      });
+      if (any) {
+        store(LS.data, data);
+        renderNav(); renderProgress();
+        if (!editing && (cur || view.sec === "durum")) render();
+      }
+    });
+    fb.root.child("done").on("value", s => {
+      const v = s.val() || {};
+      if (JSON.stringify(v) === JSON.stringify(done)) return;
+      done = v; store(LS.done, done);
+      renderNav();
+      if (!editing) render(); else renderProgress();
+    });
+    fb.root.child("log").limitToLast(30).on("value", s => {
+      const v = s.val() || {};
+      log = Object.keys(v).map(k => v[k]).filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0));
+      store(LS.log, log);
+      if (view.sec === "durum" && !editing) render();
+    });
+  }
+
+  /* ---------- Son Durum ---------- */
+  function statusSummary() {
+    const p = progress();
+    const doneSecs = data.sections.filter(s => done[s.id]).map(s => s.title);
+    const openSecs = data.sections.filter(s => !done[s.id]).map(s => s.title);
+    const items = checklistItems();
+    const openItems = items.filter(i => !i.done).map(i => i.x);
+    const ph = data.sections.filter(s => s.id !== "acik").reduce((a, s) => a + placeholderCount(s), 0);
+    const dateItem = items.find(i => /^Tarih/i.test(i.x));
+    const dateOpen = dateItem ? !dateItem.done : false;
+    return { p, doneSecs, openSecs, openItems, ph, dateOpen };
+  }
+  function renderDurum() {
+    const S = statusSummary(), p = S.p;
+    const last = log[0];
+    $("#main").innerHTML = `
+      <section class="card">
+        <h2 class="sec-title" style="margin-bottom:12px">📊 Son Durum</h2>
+        <div class="big">
+          <div class="ring" style="--p:${p.pct}"><span>%${p.pct}</span></div>
+          <div class="stat-lines">
+            <div><b>${p.secDone}/${p.secTotal}</b> bölüm tamamlandı</div>
+            <div><b>${p.chkDone}/${p.chkTotal}</b> açık nokta işaretlendi</div>
+            <div><b>${S.ph}</b> doldurulacak [ ] alan kaldı</div>
+            ${last ? `<div class="muted">Son değişiklik: ${esc(last.who)} · ${timeAgo(last.at)}</div>` : ""}
+          </div>
+        </div>
+        <div class="listen">
+          <button type="button" class="tbtn primary" id="speakBtn">🔊 Dinle</button>
+          <button type="button" class="tbtn" id="stopBtn">⏹ Durdur</button>
+        </div>
+        ${S.dateOpen ? `<div class="warn">Tarih kararı bekliyor: Şubat planında 15 eğitim gününün 10'u Ramazan'a denk geliyor. Öneri B (15 Mart–2 Nisan) çakışmasız.</div>` : ""}
+      </section>
+      <section class="card">
+        <h3 style="margin:0">Bölümler</h3>
+        <ul class="status-list">${data.sections.map(s => {
+          const n = placeholderCount(s);
+          return `<li><span class="st ${done[s.id] ? "ok" : ""}">${done[s.id] ? "Tamamlandı" : "Devam ediyor"}</span><span class="nm">${s.icon} ${esc(s.title)}</span>${s.id !== "acik" && n ? `<span class="ph-count">${n} boş alan</span>` : ""}<button type="button" class="mini" data-nav="${s.id}" aria-label="Aç">›</button></li>`;
+        }).join("")}</ul>
+      </section>
+      <section class="card">
+        <h3 style="margin:0">Bekleyen açık noktalar (${S.openItems.length})</h3>
+        ${S.openItems.length ? `<ul>${S.openItems.map(x => `<li>${phHtml(x)}</li>`).join("")}</ul>` : `<p class="muted">Hepsi tamamlandı.</p>`}
+      </section>
+      <section class="card">
+        <h3 style="margin:0">Son değişiklikler</h3>
+        ${log.length ? `<ul class="log">${log.slice(0, 15).map(l => `<li><b>${esc(l.who)}</b> – ${esc(l.what)} <span class="when">${timeAgo(l.at)}</span></li>`).join("")}</ul>` : `<p class="muted">Henüz değişiklik yok.</p>`}
+      </section>`;
+  }
+  function speakText() {
+    const S = statusSummary(), p = S.p;
+    const parts = [`Bahçıvanlık Eğitimi 2027 hazırlığı yüzde ${p.pct} tamamlandı.`];
+    parts.push(`${p.secTotal} bölümden ${p.secDone} tanesi tamamlandı.`);
+    if (S.doneSecs.length) parts.push(`Tamamlanan bölümler: ${S.doneSecs.join(", ")}.`);
+    if (S.openSecs.length) parts.push(`Devam eden bölümler: ${S.openSecs.join(", ")}.`);
+    if (S.openItems.length) {
+      parts.push(`Açık noktalardan ${S.openItems.length} tanesi bekliyor.`);
+      S.openItems.slice(0, 6).forEach((x, i) => parts.push(`${i + 1}: ${x.replace(/[\[\]"]/g, "")}.`));
+      if (S.openItems.length > 6) parts.push(`ve ${S.openItems.length - 6} madde daha.`);
+    } else parts.push("Tüm açık noktalar tamamlandı.");
+    parts.push(`Belgelerde doldurulması gereken ${S.ph} alan var.`);
+    if (S.dateOpen) parts.push("Tarih kararı henüz verilmedi. Şubat planında on gün Ramazan'a denk geliyor.");
+    if (log[0]) parts.push(`Son değişikliği ${log[0].who} yaptı: ${log[0].what.replace(/›/g, ",")}.`);
+    return parts;
+  }
+  function speak() {
+    if (!("speechSynthesis" in window)) { toast("Bu cihaz sesli okumayı desteklemiyor."); return; }
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const voices = synth.getVoices();
+    const tr = voices.find(v => /^tr/i.test(v.lang));
+    speakText().forEach(t => {
+      const u = new SpeechSynthesisUtterance(t);
+      u.lang = "tr-TR"; u.rate = 1; if (tr) u.voice = tr;
+      synth.speak(u);
+    });
+    if (!tr && voices.length) toast("Türkçe ses bulunamadı; cihazın varsayılan sesi kullanılıyor.", 3500);
+  }
+
+  /* ---------- alt sayfa (menü, dışa aktarım) ---------- */
+  function openSheet(html) { $("#sheet").innerHTML = html; $("#sheetBack").hidden = false; }
+  function closeSheet() { $("#sheetBack").hidden = true; $("#sheet").innerHTML = ""; }
+
+  const FMT = { word: "Word", pdf: "PDF", excel: "Excel" };
+  function exportChooser(fmt) {
+    const s = curSec(), p = curPart(), multi = s.parts.length > 1;
+    openSheet(`<h4>${FMT[fmt]} çıktısı</h4><p>Hangi kısmı indirmek istiyorsunuz?</p>
+      ${multi ? `<button type="button" class="opt" data-run="${fmt}" data-scope="part">Bu sayfa<small>${esc(p.title)}</small></button>` : ""}
+      <button type="button" class="opt" data-run="${fmt}" data-scope="sec">${multi ? "Bu bölümün tümü" : "Bu bölüm"}<small>${esc(s.title)}${multi ? " · " + s.parts.length + " sayfa" : ""}</small></button>
+      <button type="button" class="opt" data-run="${fmt}" data-scope="all">Tüm dosya<small>Bütün bölümler, her biri ayrı sayfada</small></button>
+      <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button></div>`);
+  }
+  async function runExport(fmt, scope, secOverride) {
+    closeSheet();
+    const s = secOverride ? null : curSec(), p = secOverride ? null : curPart();
+    let parts, title, heads;
+    if (scope === "part") { parts = [{ label: p.title, sheet: p.title, blocks: p.blocks }]; title = "Bahçıvanlık 2027 - " + p.title; heads = false; }
+    else if (scope === "sec") {
+      parts = s.parts.map(x => ({ label: s.parts.length > 1 ? s.title + " – " + x.title : s.title, sheet: x.title, blocks: x.blocks }));
+      title = "Bahçıvanlık 2027 - " + s.title; heads = s.parts.length > 1;
+    } else {
+      parts = []; data.sections.forEach(sec => sec.parts.forEach(x => parts.push({ label: sec.parts.length > 1 ? sec.title + " – " + x.title : sec.title, sheet: sec.parts.length > 1 ? x.title : sec.title, blocks: x.blocks })));
+      title = "Bahçıvanlık Eğitimi 2027 Dosyası"; heads = true;
+    }
+    toast(FMT[fmt] + " hazırlanıyor…", 6000);
+    try {
+      if (fmt === "word") await Exporter.toWord(parts, title, heads);
+      if (fmt === "pdf") await Exporter.toPdf(parts, title, heads);
+      if (fmt === "excel") await Exporter.toExcel(parts, title);
+      toast(FMT[fmt] + " dosyası hazır ✓");
+    } catch (e) {
+      console.error(e);
+      toast("Çıktı alınamadı: " + (e.message || e), 5000);
+    }
+  }
+  function menu() {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+    openSheet(`<h4>Menü</h4><p>Bağlantı: ${esc($("#syncTxt").textContent)}. ${fb.ok ? "Yaptığınız her değişiklik bu uygulamayı açan herkeste anında görünür." : "Ortak kayda bağlı değil; değişiklikler bu cihazda tutuluyor."}</p>
+      <button type="button" class="opt" data-act="name">👤 Adım: ${esc(me || "belirtilmedi")}<small>Değişiklik geçmişinde görünen ad</small></button>
+      <button type="button" class="opt" data-run="word" data-scope="all">📝 Tüm dosya – Word</button>
+      <button type="button" class="opt" data-run="pdf" data-scope="all">📄 Tüm dosya – PDF</button>
+      <button type="button" class="opt" data-run="excel" data-scope="all">📊 Tüm dosya – Excel</button>
+      ${installEvt ? `<button type="button" class="opt" data-act="install">📲 Telefona uygulama olarak yükle</button>` : ""}
+      ${isIOS && !standalone ? `<div class="opt">📲 iPhone'a yüklemek için<small>Safari'de Paylaş düğmesi → "Ana Ekrana Ekle"</small></div>` : ""}
+      <button type="button" class="opt" data-act="backup">💾 Yedek indir<small>Tüm içerik ve tikler (JSON)</small></button>
+      <button type="button" class="opt" data-act="restore">📂 Yedekten geri yükle<small>Herkes için geçerli olur</small></button>
+      <button type="button" class="opt" data-act="reset">↺ İlk taslağa dön<small>Tüm düzenlemeler silinir, herkes için</small></button>
+      <div class="row"><button type="button" class="tbtn" data-close>Kapat</button></div>`);
+  }
+  function askName(force) {
+    if (me && !force) return;
+    openSheet(`<h4>Adınız</h4><p>Değişiklik geçmişinde ve "Son Durum"da kimin ne yaptığı bu adla görünür.</p>
+      <input type="text" id="nameIn" value="${esc(me)}" placeholder="Ör. Sertaç Hekim" autocomplete="name">
+      <div class="row">${me ? `<button type="button" class="tbtn" data-close>Vazgeç</button>` : ""}<button type="button" class="tbtn primary" data-act="saveName">Kaydet</button></div>`);
+    setTimeout(() => { const i = $("#nameIn"); if (i) i.focus(); }, 50);
+  }
+  function backup() {
+    const blob = new Blob([JSON.stringify({ app: "bahcivanlik2027", savedAt: new Date().toISOString(), data, done }, null, 1)], { type: "application/json" });
+    Exporter.save(blob, "bahcivanlik-2027-yedek-" + new Date().toISOString().slice(0, 10) + ".json");
+  }
+  function restoreFrom(obj) {
+    if (!obj || !obj.data || !obj.data.sections) { toast("Geçersiz yedek dosyası"); return; }
+    data = obj.data; done = obj.done || {};
+    store(LS.data, data); store(LS.done, done);
+    if (fb.ok) {
+      const parts = {}; eachPart((s, p, k) => { parts[k] = p.blocks; });
+      fb.root.update({ parts, done }).catch(err => toast("Yüklenemedi: " + err.message));
+    }
+    addLog("Yedekten geri yükleme yaptı");
+    renderNav(); render(); toast("Yedek yüklendi ✓");
+  }
+
+  /* ---------- olaylar ---------- */
+  document.addEventListener("click", e => {
+    const t = e.target;
+    const nav = t.closest("[data-nav]"); if (nav) { go(nav.dataset.nav); return; }
+    const part = t.closest("[data-part]");
+    if (part) { if (editing) finishEdit(); view.part = view.part || {}; view.part[curSec().id] = part.dataset.part; store(LS.view, view); render(); return; }
+    if (t.closest("#editBtn")) { editing ? (finishEdit(), render()) : startEdit(); return; }
+    const ex = t.closest("[data-exp]"); if (ex) { exportChooser(ex.dataset.exp); return; }
+    const run = t.closest("[data-run]"); if (run) { runExport(run.dataset.run, run.dataset.scope); return; }
+    const op = t.closest("button[data-op]"); if (op) { onOp(op); return; }
+    if (t.closest("[data-close]") || t === $("#sheetBack")) { closeSheet(); return; }
+    if (t.closest("#menuBtn") || t.closest("#syncBtn")) { menu(); return; }
+    if (t.closest("#speakBtn")) { speak(); return; }
+    if (t.closest("#stopBtn")) { if ("speechSynthesis" in window) speechSynthesis.cancel(); return; }
+    const act = t.closest("[data-act]");
+    if (act) {
+      const a = act.dataset.act;
+      if (a === "name") askName(true);
+      if (a === "saveName") {
+        const v = ($("#nameIn").value || "").trim();
+        if (!v) { toast("Lütfen adınızı yazın"); return; }
+        me = v; localStorage.setItem(LS.me, me); closeSheet(); toast("Merhaba " + me);
+      }
+      if (a === "install" && installEvt) { closeSheet(); installEvt.prompt(); installEvt = null; }
+      if (a === "backup") { closeSheet(); backup(); }
+      if (a === "restore") { closeSheet(); $("#importFile").click(); }
+      if (a === "reset") {
+        if (!confirm("Tüm düzenlemeler silinip ilk taslağa dönülecek. Bu işlem herkes için geçerli. Emin misiniz?")) return;
+        closeSheet(); restoreFrom({ data: clone(DEF), done: {} });
+      }
+    }
+  });
+  document.addEventListener("change", e => {
+    if (e.target.id === "doneChk") { setDone(curSec().id, e.target.checked); return; }
+    if (e.target.matches("input[data-op='chk']")) { onOp(e.target); return; }
+    if (e.target.id === "importFile") {
+      const f = e.target.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { try { const o = JSON.parse(r.result); if (confirm("Yedek yüklensin mi? Mevcut içerik herkes için değişecek.")) restoreFrom(o); } catch (err) { toast("Dosya okunamadı"); } };
+      r.readAsText(f); e.target.value = "";
+    }
+  });
+  document.addEventListener("input", onInput);
+  document.addEventListener("paste", e => {
+    const el = e.target.closest && e.target.closest("[contenteditable]");
+    if (!el) return;
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+    document.execCommand("insertText", false, text);
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !$("#sheetBack").hidden) closeSheet();
+  });
+  window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; });
+  window.addEventListener("beforeunload", () => { Object.keys(writeTimers).forEach(flushWrite); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") Object.keys(writeTimers).forEach(flushWrite); });
+  setInterval(() => { if (view.sec === "durum" && !editing && $("#sheetBack").hidden) render(); }, 60000);
+
+  /* ---------- başlat ---------- */
+  renderNav(); render();
+  setSync("", "Bağlanıyor");
+  fbInit();
+  askName(false);
+  if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
