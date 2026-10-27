@@ -27,6 +27,11 @@
   const fb = { db: null, ok: false, connected: false, root: null };
   const writeTimers = {};
   let installEvt = null;
+  let presence = {}, presRef = null, presDay = null;
+  const deviceId = localStorage.getItem("bhc27_dev") || (() => { const id = "d" + Math.random().toString(36).slice(2, 10); localStorage.setItem("bhc27_dev", id); return id; })();
+  const todayKey = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+  const hhmm = ts => ts ? new Date(ts).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "";
+  const deviceLabel = () => /iPhone|iPad|iPod/.test(navigator.userAgent) ? "iPhone" : /Android/.test(navigator.userAgent) ? "Android" : "Bilgisayar";
 
   /* ---------- yardımcılar ---------- */
   const keyOf = (s, p) => s.id + "__" + p.id;
@@ -282,7 +287,7 @@
     const authReady = (firebase.auth ? firebase.auth().signInAnonymously().catch(() => null) : Promise.resolve());
     fb.db.ref(".info/connected").on("value", s => {
       fb.connected = !!s.val();
-      if (fb.ok) setSync(fb.connected ? "on" : "off", fb.connected ? "Canlı · ortak" : "Çevrimdışı");
+      if (fb.ok) { syncLabel(); if (fb.connected) presenceStart(); }
     });
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("zaman aşımı")), 15000));
     Promise.race([authReady.then(() => fb.root.child("meta/seeded").once("value")), timeout]).then(snap => {
@@ -296,8 +301,9 @@
       dirty.forEach(k => { const p = partByKey(k); if (p) upd["parts/" + k] = p.blocks; });
       if (Object.keys(upd).length) return fb.root.update(upd).then(() => { dirty.clear(); store(LS.dirty, []); });
     }).then(() => {
-      setSync(fb.connected ? "on" : "off", fb.connected ? "Canlı · ortak" : "Çevrimdışı");
+      syncLabel();
       listen();
+      presenceStart();
     }).catch(err => {
       fb.ok = false;
       setSync("off", "Yalnız bu cihaz");
@@ -305,6 +311,49 @@
       toast("Ortak kayda bağlanılamadı; değişiklikler şimdilik yalnız bu cihazda.", 4500);
     });
   }
+  /* ---------- kim bağlı ---------- */
+  function people() {
+    const map = {};
+    Object.keys(presence || {}).forEach(id => {
+      const e = presence[id]; if (!e || !e.who) return;
+      const k = e.who.trim().toLocaleLowerCase("tr");
+      const m = map[k] || (map[k] = { who: e.who, online: false, first: 0, last: 0, devices: new Set() });
+      if (e.online) m.online = true;
+      if (e.first && (!m.first || e.first < m.first)) m.first = e.first;
+      if ((e.last || 0) > m.last) m.last = e.last || 0;
+      if (e.ua) m.devices.add(e.ua);
+    });
+    return Object.values(map).sort((a, b) => (b.online - a.online) || (b.last - a.last));
+  }
+  function syncLabel() {
+    if (!fb.ok) { setSync("off", "Yalnız bu cihaz"); return; }
+    if (!fb.connected) { setSync("off", "Çevrimdışı"); return; }
+    const n = people().filter(x => x.online).length;
+    setSync("on", n > 1 ? "Canlı · " + n + " kişi açık" : "Canlı · ortak");
+  }
+  function presenceStart() {
+    if (!fb.ok || !me) return;
+    const TS = firebase.database.ServerValue.TIMESTAMP;
+    const day = todayKey();
+    if (presDay !== day) {
+      if (presRef) { presRef.onDisconnect().cancel(); presRef.update({ online: false, last: TS }).catch(() => {}); }
+      if (presDay) fb.root.child("presence/" + presDay).off();
+      presDay = day;
+      presRef = fb.root.child("presence/" + day + "/" + deviceId);
+      presRef.child("first").transaction(v => v || Date.now()).catch(() => {});
+      fb.root.child("presence/" + day).on("value", snap => {
+        presence = snap.val() || {};
+        syncLabel();
+        if (view.sec === "durum" && !editing && $("#sheetBack").hidden) render();
+      });
+    }
+    presRef.update({ who: me, online: document.visibilityState !== "hidden", last: TS, ua: deviceLabel() }).catch(() => {});
+    presRef.onDisconnect().update({ online: false, last: TS });
+  }
+  function presenceAway() {
+    if (presRef) presRef.update({ online: false, last: firebase.database.ServerValue.TIMESTAMP }).catch(() => {});
+  }
+
   function listen() {
     fb.root.child("parts").on("value", s => {
       const v = s.val() || {};
@@ -380,6 +429,10 @@
         }).join("")}</ul>
       </section>
       <section class="card">
+        <h3 style="margin:0">Bugün bağlananlar (${people().length})</h3>
+        ${!fb.ok ? `<p class="muted">Ortak kayda bağlı olunmadığı için görüntülenemiyor.</p>` : people().length ? `<ul class="status-list">${people().map(x => `<li><span class="st ${x.online ? "ok" : ""}">${x.online ? "Şu an açık" : "Son " + hhmm(x.last)}</span><span class="nm">${esc(x.who)}<br><span class="muted" style="font-size:12px">İlk giriş ${hhmm(x.first)}${x.devices.size ? " · " + [...x.devices].join(", ") : ""}</span></span></li>`).join("")}</ul>` : `<p class="muted">Bugün henüz kimse bağlanmadı.</p>`}
+      </section>
+      <section class="card">
         <h3 style="margin:0">Bekleyen açık noktalar (${S.openItems.length})</h3>
         ${S.openItems.length ? `<ul>${S.openItems.map(x => `<li>${phHtml(x)}</li>`).join("")}</ul>` : `<p class="muted">Hepsi tamamlandı.</p>`}
       </section>
@@ -400,6 +453,12 @@
       if (S.openItems.length > 6) parts.push(`ve ${S.openItems.length - 6} madde daha.`);
     } else parts.push("Tüm açık noktalar tamamlandı.");
     parts.push(`Belgelerde doldurulması gereken ${S.ph} alan var.`);
+    const ppl = fb.ok ? people() : [];
+    if (ppl.length) {
+      parts.push(`Bugün ${ppl.length} kişi bağlandı: ${ppl.map(x => x.who).join(", ")}.`);
+      const on = ppl.filter(x => x.online).map(x => x.who);
+      if (on.length) parts.push(`Şu an açık olanlar: ${on.join(", ")}.`);
+    }
     if (S.dateOpen) parts.push("Tarih kararı henüz verilmedi. Şubat planında on gün Ramazan'a denk geliyor.");
     if (log[0]) parts.push(`Son değişikliği ${log[0].who} yaptı: ${log[0].what.replace(/›/g, ",")}.`);
     return parts;
@@ -513,7 +572,7 @@
       if (a === "saveName") {
         const v = ($("#nameIn").value || "").trim();
         if (!v) { toast("Lütfen adınızı yazın"); return; }
-        me = v; localStorage.setItem(LS.me, me); closeSheet(); toast("Merhaba " + me);
+        me = v; localStorage.setItem(LS.me, me); closeSheet(); toast("Merhaba " + me); presenceStart();
       }
       if (a === "install" && installEvt) { closeSheet(); installEvt.prompt(); installEvt = null; }
       if (a === "backup") { closeSheet(); backup(); }
@@ -547,8 +606,14 @@
   });
   window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; });
   window.addEventListener("beforeunload", () => { Object.keys(writeTimers).forEach(flushWrite); });
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") Object.keys(writeTimers).forEach(flushWrite); });
-  setInterval(() => { if (view.sec === "durum" && !editing && $("#sheetBack").hidden) render(); }, 60000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") { Object.keys(writeTimers).forEach(flushWrite); presenceAway(); }
+    else presenceStart();
+  });
+  setInterval(() => {
+    if (presDay && presDay !== todayKey()) presenceStart();
+    if (view.sec === "durum" && !editing && $("#sheetBack").hidden) render();
+  }, 60000);
 
   /* ---------- başlat ---------- */
   renderNav(); render();
