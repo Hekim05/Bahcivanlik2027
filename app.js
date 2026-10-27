@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
-  const APP_VERSION = "12 · 27 Ekim 2026";
+  const APP_VERSION = "13 · 27 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -40,6 +40,8 @@
   const writeTimers = {};
   let installEvt = null;
   let att = load("bhc27_att") || {};
+  let salon = load("bhc27_salon");
+  let progBackup = load("bhc27_progbak");
   let settings = load("bhc27_settings") || {};
   let yokDay = null, yokQ = "", belgeOnly = false, yokFilter = "absent";
   const fold = s => String(s || "").toLocaleLowerCase("tr").replace(/ç/g, "c").replace(/ğ/g, "g").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ş/g, "s").replace(/ü/g, "u").replace(/â/g, "a").replace(/î/g, "i").replace(/û/g, "u").replace(/\s+/g, " ").trim();
@@ -201,7 +203,7 @@
         </div>
         ${editing ? `<div class="editing-note">Düzenleme açık. Metne ve tablo hücrelerine dokunup yazın; değişiklikler kaydedilir ve herkese yansır.</div>` : ""}
         ${s.id === "tarih" && !editing ? renderShiftBox() : ""}
-        <div class="doc" id="doc">${p.special === "yoklama" ? renderYoklama() : p.special === "belge" ? renderBelge() : renderBlocks(p.blocks)}</div>
+        <div class="doc" id="doc">${p.special === "yoklama" ? renderYoklama() : p.special === "belge" ? renderBelge() : p.special === "gorev" ? renderGorev() : renderBlocks(p.blocks)}</div>
       </section>`;
     if (p.special === "yoklama") { document.documentElement.style.setProperty("--hdr", ($(".top").offsetHeight || 90) + "px"); yokApplyFilter(); }
   }
@@ -499,6 +501,16 @@
       if (p && p.special && !editing && !typing) render();
       if (view.sec === "durum" && !editing) render();
     });
+    fb.root.child("salon").on("value", s => {
+      const v = s.val();
+      if (!v) { if (salon && Object.keys(salon).length) fb.root.child("salon").set(salon).catch(() => {}); return; }
+      if (JSON.stringify(v) === JSON.stringify(salon)) return;
+      salon = v; store("bhc27_salon", salon);
+      const p = view.sec === "gorev" ? curPart() : null;
+      const typing = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.salon;
+      if (p && p.special === "gorev" && !typing) render();
+    });
+    fb.root.child("backup/program").on("value", s => { progBackup = s.val() || null; store("bhc27_progbak", progBackup); });
     fb.root.child("settings").on("value", s => {
       const v = s.val() || {};
       if (JSON.stringify(v) === JSON.stringify(settings)) return;
@@ -656,6 +668,7 @@
       ${isIOS && !standalone ? `<div class="opt">📲 iPhone'a yüklemek için<small>Safari'de Paylaş düğmesi → "Ana Ekrana Ekle"</small></div>` : ""}
       <button type="button" class="opt" data-act="backup">💾 Yedek indir<small>Tüm içerik ve tikler (JSON)</small></button>
       <button type="button" class="opt" data-act="restore">📂 Yedekten geri yükle<small>Herkes için geçerli olur</small></button>
+      ${progBackup && progBackup.blocks ? `<button type="button" class="opt" data-act="progUndo">↩︎ Önceki programa dön<small>${esc(progBackup.who || "")} · ${progBackup.at ? new Date(progBackup.at).toLocaleString("tr-TR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : ""} Excel yüklemesinden önceki program</small></button>` : ""}
       <button type="button" class="opt" data-act="reset">↺ İlk taslağa dön<small>Tüm düzenlemeler silinir, herkes için</small></button>
       <p style="margin-top:10px;font-size:12px">Sürüm ${APP_VERSION}</p>
       <div class="row"><button type="button" class="tbtn" data-close>Kapat</button></div>`);
@@ -819,10 +832,11 @@
   function applyShift() {
     if (!shiftPlan) return;
     if (editing) finishEdit();
-    const { map, oldYear, newStart } = shiftPlan;
+    const { map, oldYear, newStart, skipProgram, noCheck, logText } = shiftPlan;
     const changed = [];
     data.sections.forEach(s => {
       if (s.id === "tarih") return;
+      if (skipProgram && s.id === "program") return;
       s.parts.forEach(p => {
         if (p.special) return;
         const before = JSON.stringify(p.blocks);
@@ -837,14 +851,20 @@
       });
     });
     const dateItem = checklistItems().find(i => /^Tarih/i.test(i.x));
-    if (dateItem && !dateItem.done) { dateItem.done = true; const a = secById("acik"); if (a) changed.push(keyOf(a, a.parts[0])); }
+    if (!noCheck && dateItem && !dateItem.done) { dateItem.done = true; const a = secById("acik"); if (a) changed.push(keyOf(a, a.parts[0])); }
     const natt = {};
     Object.keys(att || {}).forEach(k => { const n = map[k]; natt[n ? ymd(n) : k] = att[k]; });
     att = natt; store("bhc27_att", att);
     if (fb.ok) fb.root.child("attendance").set(att).catch(() => {});
+    if (salon) {
+      const ns = {};
+      Object.keys(salon).forEach(k => { const m = k.match(/^(\d{4}-\d{2}-\d{2})(_.*)$/); const n = m && map[m[1]]; ns[n ? ymd(n) + m[2] : k] = salon[k]; });
+      salon = ns; store("bhc27_salon", salon);
+      if (fb.ok) fb.root.child("salon").set(salon).catch(() => {});
+    }
     [...new Set(changed)].forEach(k => { dirty.add(k); queueWrite(k, true); });
     store(LS.dirty, [...dirty]); store(LS.data, data);
-    addLog("Eğitim başlangıcını " + fmtLong(newStart) + " olarak değiştirdi");
+    addLog(logText || ("Eğitim başlangıcını " + fmtLong(newStart) + " olarak değiştirdi"));
     shiftPlan = null; yokDay = null;
     closeSheet(); renderNav(); render();
     toast("Tarihler güncellendi ✓ (" + changed.length + " sayfa)", 3500);
@@ -1074,6 +1094,7 @@
       <h3 class="belge-h no">✗ Belge almaz (${no.length})</h3>${tbl(no)}`;
   }
   function blocksOf(p) {
+    if (p.special === "gorev") return gorevBlocks();
     if (p.special === "belge") {
       const B = belgeStats();
       const yes = B.rows.filter(r => r.ok), no = B.rows.filter(r => !r.ok);
@@ -1174,7 +1195,8 @@
     try {
       await Exporter.loadReader();
       const buf = await file.arrayBuffer();
-      imp.wb = window.XLSX.read(buf, { type: "array" });
+      imp.wb = window.XLSX.read(buf, { type: "array", cellDates: true });
+      imp.target = null;
       imp.file = file.name.replace(/\.[^.]+$/, "");
       imp.sheet = imp.wb.SheetNames[0];
       $("#toast").classList.remove("show");
@@ -1193,6 +1215,22 @@
     const nameCols = head.map((h, i) => isNameCol(h) ? i : -1).filter(i => i >= 0);
     const customs = data.sections.filter(s => s.custom);
     const defName = nameCols.length ? "Kursiyerler" : imp.file;
+    imp.raw = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true, blankrows: false });
+    const looksProgram = guessCol(head, PROG_FIELDS[0][2]) >= 0 && guessCol(head, PROG_FIELDS[2][2]) >= 0;
+    if (imp.target == null) imp.target = looksProgram ? "program" : nameCols.length && secById("kursiyer") ? "kursiyer" : "__new";
+    const targetSel = `<div class="lbl">Nereye yüklensin?</div>
+      <select id="impTarget"><option value="program" ${imp.target === "program" ? "selected" : ""}>🗓️ 2027 Programı (mevcut programın yerine)</option>${secById("kursiyer") ? `<option value="kursiyer" ${imp.target === "kursiyer" ? "selected" : ""}>👥 Kursiyerler (liste yenilenir)</option>` : ""}<option value="__new" ${imp.target === "__new" ? "selected" : ""}>Yeni sekme</option>${customs.map(s => `<option value="${s.id}" ${imp.target === s.id ? "selected" : ""}>${esc(s.title)} (içeriği değişir)</option>`).join("")}</select>`;
+    if (imp.target === "program") {
+      openSheet(`<h4>Excel'den program yükle</h4><p>${esc(imp.file)} · ${body.length} satır bulundu.</p>
+        ${imp.wb.SheetNames.length > 1 ? `<div class="lbl">Excel sayfası</div><select id="impSheet">${imp.wb.SheetNames.map(n => `<option ${n === imp.sheet ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>` : ""}
+        ${targetSel}
+        <div class="lbl">Sütunları eşleştirin</div>
+        ${PROG_FIELDS.map(([f, l, re]) => { const g = guessCol(head, re); return `<div class="tab-row" style="margin:4px 0"><span style="flex:0 0 80px">${l}${f === "note" ? " <small class='muted'>(ops.)</small>" : ""}</span><select class="impMap" data-f="${f}" style="margin:0"><option value="-1">— yok —</option>${head.map((h, i) => `<option value="${i}" ${i === g ? "selected" : ""}>${esc(h)}${body[0] && body[0][i] ? " · " + esc(String(body[0][i]).slice(0, 18)) : ""}</option>`).join("")}</select></div>`; }).join("")}
+        <p style="margin-top:10px">Tarihi boş satırlar bir üstteki günün devamı sayılır; "1. Hafta" satırları kendiliğinden eklenir, Ramazan ve tatil günleri işaretlenir. Görev takvimi, yoklama günleri ve gösterge paneli yeni programa göre güncellenir.</p>
+        <p style="color:var(--amber)">Mevcut program yedeklenir; Ayarlar → "Önceki programa dön" ile geri alabilirsiniz.</p>
+        <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button><button type="button" class="tbtn primary" data-act="impRun">Programı yükle</button></div>`);
+      return;
+    }
     openSheet(`<h4>Excel'den yükle</h4><p>${esc(imp.file)} · ${body.length} satır bulundu.</p>
       ${imp.wb.SheetNames.length > 1 ? `<div class="lbl">Excel sayfası</div><select id="impSheet">${imp.wb.SheetNames.map(n => `<option ${n === imp.sheet ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>` : ""}
       <div class="lbl">Alınacak sütunlar</div>
@@ -1200,13 +1238,13 @@
       ${head.map((h, i) => `<label class="cb"><input type="checkbox" class="impCol" value="${i}" ${nameCols.includes(i) ? "checked" : ""}> ${esc(h)} <span class="muted" style="font-size:12px">${esc((body[0] || [])[i] || "")}</span></label>`).join("")}
       ${nameCols.length > 1 ? `<label class="cb"><input type="checkbox" id="impMerge" checked> Ad ve soyadı tek "Ad Soyad" sütununda birleştir</label>` : ""}
       <label class="cb"><input type="checkbox" id="impNo" checked> Başa sıra numarası ekle</label>
-      <div class="lbl">Nereye yüklensin?</div>
-      <select id="impTarget">${secById("kursiyer") ? `<option value="kursiyer" ${nameCols.length ? "selected" : ""}>👥 Kursiyerler (liste yenilenir)</option>` : ""}<option value="__new" ${nameCols.length ? "" : "selected"}>Yeni sekme</option>${customs.map(s => `<option value="${s.id}">${esc(s.title)} (içeriği değişir)</option>`).join("")}</select>
+      ${targetSel}
       <label class="cb"><input type="checkbox" id="impSort" ${nameCols.length ? "checked" : ""}> Ada göre A→Z sırala ve toplamı göster</label>
-      <div id="impNameWrap" ${nameCols.length && secById("kursiyer") ? "hidden" : ""}><div class="lbl">Yeni sekmenin adı</div><input type="text" id="impName" value="${esc(defName)}"></div>
+      <div id="impNameWrap" ${imp.target === "__new" ? "" : "hidden"}><div class="lbl">Yeni sekmenin adı</div><input type="text" id="impName" value="${esc(defName)}"></div>
       <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button><button type="button" class="tbtn primary" data-act="impRun">Yükle</button></div>`);
   }
   function importRun() {
+    if ($("#impTarget") && $("#impTarget").value === "program") { importProgram(); return; }
     const cols = [...document.querySelectorAll(".impCol:checked")].map(x => +x.value);
     if (!cols.length) { toast("En az bir sütun seçin"); return; }
     const withNo = $("#impNo").checked;
@@ -1244,6 +1282,155 @@
       addLog(`${sec.title} sekmesine Excel'den ${rows.length} kayıt yükledi`);
     }
     closeSheet(); go(sec.id); toast(rows.length + " kayıt yüklendi ✓");
+  }
+
+  /* ---------- program yükleme ---------- */
+  const PROG_FIELDS = [["date", "Tarih", /tarih|gün|gun|date/], ["time", "Saat", /saat|time/], ["topic", "Konu", /konu|ders|başlık|baslik|eğitim adı/], ["who", "Eğitmen", /eğitmen|egitmen|eğitimci|egitimci|eğitici|hoca|anlatan|sunan/], ["note", "Not", /^not|açıklama|aciklama/]];
+  function guessCol(head, re) { return head.findIndex(h => re.test(String(h).toLocaleLowerCase("tr"))); }
+  function parseProgDate(raw, txt, fy) {
+    if (raw instanceof Date && !isNaN(raw)) { const d = new Date(raw.getTime() + 12 * 3600e3); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+    if (typeof raw === "number" && raw > 20000 && raw < 80000 && window.XLSX && XLSX.SSF) { const o = XLSX.SSF.parse_date_code(raw); if (o) return new Date(o.y, o.m - 1, o.d); }
+    const s = String(txt || raw || "").trim(); if (!s) return null;
+    let m = s.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/); if (m) { let y = +m[3]; if (y < 100) y += 2000; return new Date(y, +m[2] - 1, +m[1]); }
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+    m = s.toLocaleLowerCase("tr").match(/(\d{1,2})\s+(ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\s*(\d{4})?/);
+    if (m) return new Date(m[3] ? +m[3] : fy, AYLAR.indexOf(m[2]), +m[1]);
+    return null;
+  }
+  function importProgram() {
+    const map = {}; document.querySelectorAll(".impMap").forEach(s => { map[s.dataset.f] = +s.value; });
+    if (map.date < 0 || map.topic < 0) { toast("Tarih ve Konu sütunlarını seçin"); return; }
+    const fy = (programDates()[0] || {}).d ? programDates()[0].d.getFullYear() : 2027;
+    const txtRows = imp.rows.slice(imp.headIdx + 1), rawRows = (imp.raw || []).slice(imp.headIdx + 1);
+    const g = (r, f) => map[f] >= 0 ? String(r[map[f]] == null ? "" : r[map[f]]).trim() : "";
+    const out = []; let lastWeek = null, week = 0, year = null, dayCount = 0;
+    txtRows.forEach((r, i) => {
+      const raw = (rawRows[i] || [])[map.date];
+      const dt = g(r, "date"), tm = g(r, "time"), tp = g(r, "topic"), wh = g(r, "who"), nt = g(r, "note");
+      if (!dt && !tm && !tp && !wh) return;
+      if (/hafta/i.test(dt) && !tp && !tm) return;
+      const d = dt ? parseProgDate(raw, dt, fy) : null;
+      let dateCell = "";
+      if (d) {
+        const mon = new Date(d); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+        if (lastWeek === null || +mon !== +lastWeek) { week++; lastWeek = mon; out.push([week + ". Hafta", "", "", "", ""]); }
+        if (year === null) year = d.getFullYear();
+        dateCell = String(d.getDate()).padStart(2, "0") + " " + AY_CAP[d.getMonth()] + " " + GUN_UZUN[d.getDay()];
+        dayCount++;
+      } else if (dt) dateCell = dt;
+      out.push([dateCell, tm.replace(/\s*-\s*/g, "–"), tp, wh, nt]);
+    });
+    if (!dayCount) { toast("Tarih sütununda tarih bulunamadı; sütun eşleştirmesini kontrol edin", 4500); return; }
+    year = year || fy;
+    const sec = secById("program"), part = sec.parts[0];
+    if (!confirm(`Mevcut program (${programDates().length} gün) yerine ${dayCount} günlük yeni program yüklenecek. Eski program yedeklenecek. Devam edilsin mi?`)) return;
+    const oldDays = programDates().map(o => o.d);
+    progBackup = { at: Date.now(), who: me || "", blocks: clone(part.blocks) };
+    store("bhc27_progbak", progBackup);
+    if (fb.ok) fb.root.child("backup/program").set(progBackup).catch(() => {});
+    part.blocks = [
+      { t: "c", x: "Park ve Bahçeler Müdürlüğü\nBAHÇIVANLIK EĞİTİMİ " + year + " Programı" },
+      { t: "tbl", head: ["Tarih (" + year + ")", "Saat", "Konu", "Eğitmen", "Not"], rows: out },
+      { t: "p", x: `${imp.file} dosyasından yüklendi (${new Date().toLocaleDateString("tr-TR")}). ${dayCount} eğitim günü.` }
+    ];
+    retagProgram();
+    const k = keyOf(sec, part);
+    dirty.add(k); store(LS.dirty, [...dirty]); store(LS.data, data); queueWrite(k, true);
+    addLog(`Excel'den yeni program yükledi (${imp.file}, ${dayCount} gün)`);
+    closeSheet(); go("program");
+    afterProgramChange(oldDays);
+  }
+  function afterProgramChange(oldDays) {
+    const newDays = programDates().map(o => o.d);
+    if (!oldDays.length || !newDays.length) return;
+    const same = oldDays.length === newDays.length && oldDays.every((d, i) => +d === +newDays[i]);
+    if (same) { toast("Program yüklendi ✓ Tarihler aynı kaldı.", 3500); return; }
+    let map = null, how = "";
+    if (oldDays.length === newDays.length) { map = {}; oldDays.forEach((d, i) => { map[ymd(d)] = newDays[i]; }); how = "gün gün eşleştirilerek"; }
+    else {
+      const off = Math.round((newDays[0] - oldDays[0]) / 86400000);
+      if (off % 7 === 0 && off !== 0) { map = {}; oldDays.forEach(d => { const n = new Date(d); n.setDate(n.getDate() + off); map[ymd(d)] = n; }); how = (off / 7) + " hafta kaydırılarak"; }
+    }
+    if (!map) {
+      openSheet(`<h4>Program yüklendi</h4><p>Yeni programda ders günü sayısı ve başlangıç günü değişti (${oldDays.length} → ${newDays.length} gün). Resmî yazılar, listeler ve sunucu metinlerindeki tarihler eski programa göre kaldı; lütfen kontrol edin. Eski tarihlere girilmiş yoklamalar yeni günlerde görünmez.</p><div class="row"><button type="button" class="tbtn primary" data-close>Tamam</button></div>`);
+      return;
+    }
+    shiftPlan = { map, oldYear: oldDays[0].getFullYear(), newStart: newDays[0], skipProgram: true, noCheck: true, logText: "Program yüklemesi sonrası yazı ve listelerdeki tarihleri güncelledi" };
+    openSheet(`<h4>Diğer belgeler de güncellensin mi?</h4>
+      <p>Program tarihleri değişti: <b>${fmtRange(oldDays[0], oldDays[oldDays.length - 1])}</b> → <b>${fmtRange(newDays[0], newDays[newDays.length - 1])}</b>.</p>
+      <p>Resmî yazılar, ihtiyaç listeleri, masa planı ve sunucu metinlerindeki tarihler ile alınmış yoklamalar ${how} yeni tarihlere taşınabilir.</p>
+      <div class="row"><button type="button" class="tbtn" data-close>Hayır, olduğu gibi kalsın</button><button type="button" class="tbtn primary" data-act="progShiftYes">Evet, güncelle</button></div>`);
+  }
+  function progUndo() {
+    if (!progBackup || !progBackup.blocks) return;
+    if (!confirm("Excel yüklemesinden önceki program geri getirilecek. Devam edilsin mi?")) return;
+    const sec = secById("program"), part = sec.parts[0];
+    const oldDays = programDates().map(o => o.d);
+    part.blocks = normBlocks(progBackup.blocks);
+    progBackup = null; store("bhc27_progbak", null);
+    if (fb.ok) fb.root.child("backup/program").remove().catch(() => {});
+    const k = keyOf(sec, part);
+    dirty.add(k); store(LS.dirty, [...dirty]); store(LS.data, data); queueWrite(k, true);
+    addLog("Önceki programa geri döndü");
+    closeSheet(); go("program");
+    afterProgramChange(oldDays);
+  }
+
+  /* ---------- görev takvimi (programdan) ---------- */
+  const salonKey = (d, time) => ymd(d) + "_" + (String(time || "").replace(/[^0-9]/g, "") || "x");
+  function seedSalon() {
+    if (salon) return;
+    salon = {};
+    const s = secById("gorev"); const p = s && s.parts.find(x => x.id === "takvim");
+    const t = p && p.blocks.find(b => b.t === "tbl"); if (!t) return;
+    const yM = String((t.head || [])[0] || "").match(/(20\d\d)/); const year = yM ? +yM[1] : 2027;
+    let cur = null;
+    (t.rows || []).forEach(r => {
+      if (Exporter.isWeekRow(r)) return;
+      const m = String(r[0] || "").match(new RegExp("(\\d{1,2})\\s+(" + MON_RE + ")"));
+      if (m) cur = new Date(year, AY_CAP.indexOf(m[2]), +m[1]);
+      if (cur && r[4]) salon[salonKey(cur, r[1])] = r[4];
+    });
+    store("bhc27_salon", salon);
+  }
+  function gorevRows() {
+    seedSalon();
+    const t = programTable(); if (!t) return [];
+    const yM = String((t.head || [])[0] || "").match(/(20\d\d)/); const year = yM ? +yM[1] : 2027;
+    let cur = null;
+    return (t.rows || []).map(r => {
+      if (Exporter.isWeekRow(r)) return { week: r[0] };
+      const m = String(r[0] || "").match(new RegExp("(\\d{1,2})\\s+(" + MON_RE + ")"));
+      let dcell = "";
+      if (m) { cur = new Date(year, AY_CAP.indexOf(m[2]), +m[1]); dcell = String(cur.getDate()).padStart(2, "0") + " " + AY_CAP[cur.getMonth()] + " " + GUN_KISA[cur.getDay()]; }
+      else if (r[0]) dcell = r[0];
+      const key = cur ? salonKey(cur, r[1]) : null;
+      return { date: dcell, time: r[1] || "", topic: r[2] || "", who: String(r[3] || "").replace(/\s*\(misafir\)/i, ""), key, salon: key ? (salon[key] || "") : "" };
+    });
+  }
+  function renderGorev() {
+    const rows = gorevRows();
+    const t = programTable(); const yM = String(((t || {}).head || [])[0] || "").match(/(20\d\d)/); const year = yM ? yM[1] : "2027";
+    return `<div class="c">PARK VE BAHÇELER MÜDÜRLÜĞÜ\nBAHÇIVANLIK EĞİTİMİ ${year} Görev Takvimi</div>
+      <p class="muted" style="font-size:13.5px">Bu tablo <b>2027 Programı</b>'ndan kendiliğinden oluşur; tarih, saat, konu ve eğitmen orada değiştirilir. Buradan yalnız <b>Salon Sorumlusu</b> yazılır (hücreye dokunun).</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Tarih</th><th>Saat</th><th>Konu</th><th>Eğitmen</th><th>Salon Sorumlusu</th></tr></thead><tbody>
+      ${rows.map(r => r.week ? `<tr class="week"><td colspan="5">${esc(r.week)}</td></tr>` : `<tr><td>${esc(r.date)}</td><td>${esc(r.time)}</td><td>${esc(r.topic)}</td><td>${esc(r.who)}</td><td class="salon-cell" ${r.key ? `contenteditable="true" data-salon="${esc(r.key)}"` : ""}>${esc(r.salon)}</td></tr>`).join("")}
+      </tbody></table></div>`;
+  }
+  function gorevBlocks() {
+    const rows = gorevRows();
+    const t = programTable(); const yM = String(((t || {}).head || [])[0] || "").match(/(20\d\d)/); const year = yM ? yM[1] : "2027";
+    return [{ t: "c", x: "PARK VE BAHÇELER MÜDÜRLÜĞÜ\nBAHÇIVANLIK EĞİTİMİ " + year + " Görev Takvimi" },
+      { t: "tbl", head: ["Tarih (" + year + ")", "Saat", "Konu", "Eğitmen", "Salon Sorumlusu"], rows: rows.map(r => r.week ? [r.week, "", "", "", ""] : [r.date, r.time, r.topic, r.who, r.salon]) }];
+  }
+  const salonTimers = {};
+  function onSalonInput(el) {
+    const k = el.dataset.salon; const v = el.innerText.replace(/\n+/g, " ").trim();
+    salon = salon || {}; if (v) salon[k] = v; else delete salon[k];
+    store("bhc27_salon", salon);
+    clearTimeout(salonTimers[k]);
+    salonTimers[k] = setTimeout(() => { if (fb.ok) fb.root.child("salon/" + k).set(v || null).catch(() => {}); }, 600);
+    if (!onSalonInput.logged) { onSalonInput.logged = true; addLog("Görev takviminde salon sorumlularını düzenledi"); }
   }
 
   /* ---------- olaylar ---------- */
@@ -1288,6 +1475,8 @@
       if (a === "install" && installEvt) { closeSheet(); installEvt.prompt(); installEvt = null; }
       if (a === "backup") { closeSheet(); backup(); }
       if (a === "restore") { closeSheet(); $("#importFile").click(); }
+      if (a === "progUndo") { progUndo(); return; }
+      if (a === "progShiftYes") { applyShift(); return; }
       if (a === "reset") {
         if (!confirm("Tüm düzenlemeler silinip ilk taslağa dönülecek. Bu işlem herkes için geçerli. Emin misiniz?")) return;
         closeSheet(); restoreFrom({ data: clone(DEF), done: {} });
@@ -1303,7 +1492,11 @@
     if (e.target.id === "imzaDay" || e.target.id === "masaN") { imzaSheet(true); return; }
     if (e.target.id === "xlsxFile") { const f = e.target.files[0]; e.target.value = ""; if (f) importRead(f); return; }
     if (e.target.id === "impSheet") { imp.sheet = e.target.value; importSheet(); return; }
-    if (e.target.id === "impTarget") { const n = $("#impNameWrap"); if (n) n.hidden = e.target.value !== "__new"; return; }
+    if (e.target.id === "impTarget") {
+      const v = e.target.value;
+      if (v === "program" || imp.target === "program") { imp.target = v; importSheet(); return; }
+      imp.target = v; const n = $("#impNameWrap"); if (n) n.hidden = v !== "__new"; return;
+    }
     if (e.target.id === "importFile") {
       const f = e.target.files[0]; if (!f) return;
       const r = new FileReader();
@@ -1313,6 +1506,7 @@
   });
   document.addEventListener("input", e => {
     if (e.target.id === "yokQ") { yokQ = e.target.value; yokApplyFilter(); return; }
+    if (e.target.dataset && e.target.dataset.salon) { onSalonInput(e.target); return; }
     if (e.target.id === "numIn" || e.target.name === "numMode") { numPreview(); return; }
     onInput(e);
   });
@@ -1345,6 +1539,7 @@
   }, 60000);
 
   /* ---------- başlat ---------- */
+  try { seedSalon(); } catch (e) { console.warn(e); }
   renderNav(); render();
   setSync("", "Bağlanıyor");
   fbInit();

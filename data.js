@@ -64,7 +64,7 @@ window.DEFAULT_DATA = {
     },
     {
       id: "gorev", icon: "🧑‍🤝‍🧑", title: "Görev ve Masa Planı", parts: [
-        { id: "takvim", title: "Görev takvimi", blocks: [
+        { id: "takvim", title: "Görev takvimi", special: "gorev", blocks: [
           { t: "c", x: "PARK VE BAHÇELER MÜDÜRLÜĞÜ\nBAHÇIVANLIK EĞİTİMİ 2027 Görev Takvimi" },
           { t: "tbl", head: ["Tarih (2027)", "Saat", "Konu", "Eğitmen", "Salon Sorumlusu"], rows: [
             ["1. Hafta", "", "", "", ""],

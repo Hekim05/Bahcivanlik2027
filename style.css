@@ -105,6 +105,8 @@ td.empty-cell::after{content:"—";color:var(--muted)}
 .yok-list label{display:flex;gap:12px;align-items:center;padding:10px 4px;font-size:16px}
 .yok-list input{width:24px;height:24px;accent-color:var(--green);flex:0 0 auto}
 tr.no-belge td{color:var(--muted)}
+.salon-cell[contenteditable]{background:rgba(127,200,140,.08);box-shadow:inset 0 0 0 1px #9cc79f;border-radius:4px;min-width:110px}
+.salon-cell[contenteditable]:focus{box-shadow:inset 0 0 0 2px var(--green);outline:none}
 .belge-sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
 .belge-sum .bs{border-radius:12px;padding:10px;background:var(--bg);border:1px solid var(--line);display:flex;flex-direction:column;align-items:center}
 .belge-sum .bs b{font-size:26px;line-height:1.1}
