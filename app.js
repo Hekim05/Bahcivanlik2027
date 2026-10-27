@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
-  const APP_VERSION = "7 · 27 Ekim 2026";
+  const APP_VERSION = "8 · 27 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -20,7 +20,12 @@
   let data = load(LS.data);
   if (!data || !data.sections || data.version !== DEF.version) data = clone(DEF);
   DEF.sections.forEach((ds, i) => {
-    if (data.sections.some(s => s.id === ds.id)) return;
+    const have = data.sections.find(s => s.id === ds.id);
+    if (have) {
+      have.title = ds.title; have.icon = ds.icon;
+      have.parts.forEach(p => { const dp = ds.parts.find(x => x.id === p.id); if (dp) p.title = dp.title; });
+      return;
+    }
     const prev = i > 0 ? data.sections.findIndex(s => s.id === DEF.sections[i - 1].id) : -1;
     data.sections.splice(prev + 1, 0, clone(ds));
   });

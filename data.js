@@ -7,7 +7,7 @@ window.DEFAULT_DATA = {
   org: "Çankaya Belediyesi · Park ve Bahçeler Müdürlüğü",
   sections: [
     {
-      id: "tarih", icon: "📅", title: "Tarih ve Ramazan", parts: [{
+      id: "tarih", icon: "📅", title: "Tarih", parts: [{
         id: "tarih", title: "Tarih kararı", blocks: [
           { t: "p", x: "2026 düzeni korunursa eğitim 1–19 Şubat 2027 tarihlerine düşer ve 15 eğitim gününün 10'u Ramazan'a denk gelir. Diyanet takvimine göre Ramazan 8 Şubat 2027 Pazartesi başlar; Ramazan Bayramı 9–11 Mart 2027 (Salı–Perşembe), arife 8 Mart'tır." },
           { t: "p", x: "Ramazan'a denk gelmesi eğitimi engellemez; ancak çay-su ikramını, belge törenindeki ikramı ve devamı etkiler. 2025 programı da Ramazan'a denk gelmişti." },
