@@ -204,3 +204,6 @@ body:not(.home) .dash,body:not(.home) .nav{display:none}
 @media (prefers-color-scheme: dark){.fmt-row .word{color:#8db4f0}.fmt-row .pdf{color:#f39a8f}.fmt-row .excel{color:#7fd19c}}
 .top{padding-bottom:12px}
 .brand-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand-logo{width:44px;height:44px;border-radius:50%;background:#fff;padding:2px;flex:0 0 auto;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.brand-title{font-size:16px}
+@media (max-width:420px){#syncTxt{display:none}.sync{padding:8px}}

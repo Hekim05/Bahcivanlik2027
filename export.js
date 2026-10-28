@@ -13,6 +13,13 @@
     return loaded[src];
   }
 
+  let logoBuf = null;
+  async function logoBytes() {
+    if (logoBuf) return logoBuf;
+    try { const r = await fetch("icons/logo.png"); if (r.ok) logoBuf = await r.arrayBuffer(); } catch (e) {}
+    return logoBuf;
+  }
+  function bufToDataUrl(buf) { let s = ""; const a = new Uint8Array(buf); for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return "data:image/png;base64," + btoa(s); }
   const isWeekRow = r => r.length > 1 && /hafta/i.test(r[0] || "") && r.slice(1).every(c => !String(c || "").trim());
   const isRamazan = r => r.some(c => /ramazan/i.test(String(c || "")));
   const countRows = b => (b.rows || []).filter(r => r.slice(/^no$/i.test((b.head || [])[0] || "") ? 1 : 0).some(c => String(c || "").trim())).length;
@@ -53,9 +60,11 @@
   async function toWord(parts, title, withHeadings) {
     await loadScript("vendor/docx.umd.js");
     const D = window.docx;
-    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, ShadingType } = D;
+    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, ShadingType, ImageRun } = D;
     const runs = (x, o = {}) => lines(x).map((t, i) => new TextRun({ text: t, break: i > 0 ? 1 : 0, ...o }));
     const children = [];
+    const lb = parts.every(p => p.noLogo) ? null : await logoBytes();
+    if (lb && ImageRun) children.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, children: [new ImageRun({ data: lb, transformation: { width: 64, height: 64 } })] }));
     parts.forEach((part, pi) => {
       if (withHeadings) {
         children.push(new Paragraph({ pageBreakBefore: pi > 0, spacing: { after: 200 },
@@ -116,6 +125,8 @@
     await loadScript("vendor/pdfmake.min.js");
     await loadScript("vendor/vfs_fonts.js");
     const content = [];
+    const lb = parts.every(p => p.noLogo) ? null : await logoBytes();
+    if (lb) content.push({ image: bufToDataUrl(lb), width: 52, alignment: "center", margin: [0, 0, 0, 8] });
     parts.forEach((part, pi) => {
       if (withHeadings) content.push({ text: part.label, bold: true, fontSize: 15, color: "#2f6b3a", margin: [0, 0, 0, 10], pageBreak: pi > 0 ? "before" : undefined });
       part.blocks.forEach(b => {

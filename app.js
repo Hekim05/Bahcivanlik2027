@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
-  const APP_VERSION = "14 · 28 Ekim 2026";
+  const APP_VERSION = "15 · 28 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -710,9 +710,9 @@
     closeSheet();
     const s = secOverride ? null : curSec(), p = secOverride ? null : curPart();
     let parts, title, heads;
-    if (scope === "part") { parts = [{ label: p.title, sheet: p.title, blocks: blocksOf(p) }]; title = "Bahçıvanlık 2027 - " + p.title; heads = false; }
+    if (scope === "part") { parts = [{ label: p.title, sheet: p.title, blocks: blocksOf(p), noLogo: s.id === "yazilar" }]; title = "Bahçıvanlık 2027 - " + p.title; heads = false; }
     else if (scope === "sec") {
-      parts = s.parts.map(x => ({ label: s.parts.length > 1 ? s.title + " – " + x.title : s.title, sheet: x.title, blocks: blocksOf(x) }));
+      parts = s.parts.map(x => ({ label: s.parts.length > 1 ? s.title + " – " + x.title : s.title, sheet: x.title, blocks: blocksOf(x), noLogo: s.id === "yazilar" }));
       title = "Bahçıvanlık 2027 - " + s.title; heads = s.parts.length > 1;
     } else {
       parts = []; data.sections.forEach(sec => sec.parts.forEach(x => parts.push({ label: sec.parts.length > 1 ? sec.title + " – " + x.title : sec.title, sheet: sec.parts.length > 1 ? x.title : sec.title, blocks: blocksOf(x) })));
