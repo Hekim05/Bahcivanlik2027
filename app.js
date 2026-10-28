@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const DB_ROOT = "bahcivanlik2027";
-  const APP_VERSION = "13 · 27 Ekim 2026";
+  const APP_VERSION = "14 · 28 Ekim 2026";
   const FB_CFG = {
     apiKey: "AIzaSyAzQewf1D8AUe5ue7unEFSN4RWiToLIV_I",
     databaseURL: "https://kent-bostanlari-default-rtdb.europe-west1.firebasedatabase.app",
@@ -35,6 +35,7 @@
   let dirty = new Set(load(LS.dirty) || []);
   let log = load(LS.log) || [];
   let view = load(LS.view) || { sec: "program", part: {} };
+  view.sec = "home";
   let editing = false, editChanged = false, remoteWhileEditing = false;
   const fb = { db: null, ok: false, connected: false, root: null };
   const writeTimers = {};
@@ -53,6 +54,34 @@
   const todayKey = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
   const hhmm = ts => ts ? new Date(ts).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "";
   const deviceLabel = () => /iPhone|iPad|iPod/.test(navigator.userAgent) ? "iPhone" : /Android/.test(navigator.userAgent) ? "Android" : "Bilgisayar";
+
+  /* ---------- simgeler ---------- */
+  const IC = {
+    calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+    cap: '<path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/>',
+    mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/>',
+    box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+    mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8"/>',
+    usercheck: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/>',
+    check: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8 12 3 3 5-6"/>',
+    chart: '<path d="M3 3v18h18"/><path d="M7 16v-5M12 16V8M17 16v-3"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    trend: '<path d="m3 17 6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+    pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    signal: '<path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
+    back: '<path d="m15 18-6-6 6-6"/>',
+    next: '<path d="m9 18 6-6-6-6"/>',
+    alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+    doc: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>'
+  };
+  const ico = (n, cls) => `<svg class="i ${cls || ""}" viewBox="0 0 24 24" aria-hidden="true">${IC[n] || IC.doc}</svg>`;
+  const SEC_IC = { tarih: "calendar", program: "list", gorev: "users", egitmen: "cap", yazilar: "mail", ihtiyac: "box", acilis: "mic", kursiyer: "usercheck", acik: "check", durum: "chart" };
+  const secIco = s => ico(SEC_IC[s.id] || "doc");
+  const NAV_GROUPS = [["Planlama", ["tarih", "program", "gorev", "egitmen"]], ["Yazışma", ["yazilar", "ihtiyac"]], ["Etkinlik", ["acilis", "kursiyer"]], ["Takip", ["acik", "durum"]]];
 
   /* ---------- yardımcılar ---------- */
   const keyOf = (s, p) => s.id + "__" + p.id;
@@ -113,8 +142,6 @@
   }
   function renderProgress() {
     const p = progress();
-    $("#progFill").style.width = p.pct + "%";
-    $("#progTxt").textContent = "%" + p.pct + " · " + p.got + "/" + p.total;
     renderDash(p);
   }
 
@@ -155,63 +182,101 @@
     const ppl = fb.ok ? people() : [];
     const onN = ppl.filter(x => x.online).length;
     const dateItem = items.find(i => /^Tarih/i.test(i.x));
-    const tile = (go, icon, lbl, val, sub, cls) => `<button type="button" class="tile ${cls || ""}" data-nav="${go}"><span class="t-lbl">${icon} ${lbl}</span><span class="t-val">${val}</span><span class="t-sub">${sub}</span></button>`;
+    const tile = (go, icon, lbl, val, sub, cls, extra) => `<button type="button" class="tile ${cls || ""}" ${go.startsWith("act:") ? `data-act="${go.slice(4)}"` : `data-nav="${go}"`}><span class="t-lbl">${ico(icon)} ${lbl}</span><span class="t-val">${val}</span>${extra || ""}<span class="t-sub">${sub}</span></button>`;
     el.innerHTML = `<div class="dash-inner"><div class="dash-grid">
-      ${tile("program", "⏳", "Eğitime kalan", dVal, dSub)}
-      ${tile("durum", "📈", "Hazırlık", "%" + p.pct, p.got + "/" + p.total + " adım tamam", p.pct === 100 ? "ok-t" : "")}
-      ${tile("kursiyer", "👥", "Kursiyer", kc == null ? "–" : kc, kc ? (attTaken() ? belgeStats().eligible + " belge hakkı" : "kayıtlı") : "liste yüklenmedi")}
-      ${tile("acik", "📝", "Açık nokta", openN, openN ? "karar bekliyor" : "hepsi tamam", openN ? "" : "ok-t")}
-      ${tile("durum", "✍️", "Boş alan", ph, "[ ] doldurulacak", ph ? "" : "ok-t")}
-      ${tile("durum", "🟢", "Bugün", fb.ok ? ppl.length + " kişi" : "–", fb.ok ? (onN ? onN + " kişi şu an açık" : "şu an açık yok") : "ortak kayıt yok")}
+      ${tile("program", "clock", "Eğitime kalan", dVal, dSub)}
+      ${tile("durum", "trend", "Hazırlık", "%" + p.pct, p.got + "/" + p.total + " adım tamam", p.pct === 100 ? "ok-t" : "", `<span class="t-bar"><i style="width:${p.pct}%"></i></span>`)}
+      ${kc ? tile("kursiyer", "usercheck", "Kursiyer", kc, attTaken() ? belgeStats().eligible + " belge hakkı" : "kayıtlı") : tile("act:xlsx", "usercheck", "Kursiyer", "Yükle", "Excel'den liste yükleyin ›", "cta-t")}
+      ${tile("acik", "check", "Açık nokta", openN, openN ? "karar bekliyor ›" : "hepsi tamam", openN ? "" : "ok-t")}
+      ${tile("durum", "pen", "Boş alan", ph, ph ? "[ ] doldurulacak ›" : "hepsi dolu", ph ? "" : "ok-t")}
+      ${tile("durum", "signal", "Bugün", fb.ok ? ppl.length + " kişi" : "–", fb.ok ? (onN ? onN + " kişi şu an açık" : "şu an açık yok") : "bağlantı bekleniyor")}
     </div>
-    ${pi && pi.ramDays && dateItem && !dateItem.done ? `<button type="button" class="dash-alert" data-nav="tarih">⚠️ <span>Programda ${pi.ramDays} eğitim günü Ramazan'a denk geliyor. Tarih kararı bekliyor — öneriler için dokunun.</span></button>` : ""}
+    ${pi && pi.ramDays && dateItem && !dateItem.done ? `<button type="button" class="dash-alert" data-nav="tarih">${ico("alert")} <span>Programda ${pi.ramDays} eğitim günü Ramazan'a denk geliyor. Tarih kararı bekliyor — öneriler için dokunun.</span></button>` : ""}
     </div>`;
   }
 
   /* ---------- gezinme ---------- */
   function renderNav() {
     const nav = $("#nav");
-    nav.innerHTML = data.sections.map(s =>
-      `<button type="button" class="nav-btn ${view.sec === s.id ? "active" : ""} ${done[s.id] ? "done" : ""}" data-nav="${s.id}"><span class="ic">${s.icon}</span><span>${esc(s.title)}</span></button>`
-    ).join("") + `<button type="button" class="nav-btn durum ${view.sec === "durum" ? "active" : ""}" data-nav="durum"><span class="ic">📊</span><span>Son Durum</span></button><button type="button" class="nav-btn ayar" id="navSettings"><span class="ic">⚙️</span><span>Ayarlar</span></button>`;
+    const btn = s => `<button type="button" class="nav-btn ${done[s.id] ? "done" : ""}" data-nav="${s.id}"><span class="ic">${secIco(s)}</span><span class="nt">${esc(s.title)}</span>${done[s.id] ? `<span class="ok-dot" aria-label="Tamamlandı">✓</span>` : ""}</button>`;
+    const durumS = { id: "durum", title: "Son Durum" };
+    const used = new Set();
+    let h = NAV_GROUPS.map(([g, ids]) => {
+      const items = ids.map(id => { used.add(id); return id === "durum" ? durumS : secById(id); }).filter(Boolean);
+      return items.length ? `<div class="nav-group"><h4>${g}</h4><div class="nav-grid">${items.map(btn).join("")}</div></div>` : "";
+    }).join("");
+    const extra = data.sections.filter(s => !used.has(s.id));
+    if (extra.length) h += `<div class="nav-group"><h4>Ek sekmeler</h4><div class="nav-grid">${extra.map(btn).join("")}</div></div>`;
+    h += `<div class="nav-group"><div class="nav-grid"><button type="button" class="nav-btn ayar" id="navSettings"><span class="ic">${ico("gear")}</span><span class="nt">Ayarlar</span></button></div></div>`;
+    nav.innerHTML = h;
   }
-  function go(secId) {
+  function go(secId, fromPop) {
     if (editing) finishEdit();
+    if (secId !== "home" && secId !== "durum" && !secById(secId)) secId = "home";
+    const changed = view.sec !== secId;
     view.sec = secId; store(LS.view, view);
+    if (!fromPop && changed) { try { history.pushState({ sec: secId }, ""); } catch (e) {} }
     renderNav(); render();
-    window.scrollTo({ top: $("#nav").offsetTop - 70, behavior: "smooth" });
+    window.scrollTo(0, 0);
   }
 
   /* ---------- bölüm görünümü ---------- */
   function render() {
     renderProgress();
+    document.body.classList.toggle("home", view.sec === "home");
+    if (view.sec === "home") { $("#main").innerHTML = ""; return; }
     if (view.sec === "durum") return renderDurum();
     const s = curSec(), p = curPart();
     const multi = s.parts.length > 1;
     $("#main").innerHTML = `
+      <button type="button" class="back" data-nav="home">${ico("back")} Ana sayfa</button>
       <section class="card">
         <div class="sec-head">
-          <h2 class="sec-title">${s.icon} ${esc(s.title)}</h2>
-          <label class="done-toggle ${done[s.id] ? "is-done" : ""}"><input type="checkbox" id="doneChk" ${done[s.id] ? "checked" : ""}> Tamamlandı</label>
+          <h2 class="sec-title"><span class="ti">${secIco(s)}</span>${esc(s.title)}</h2>
+          ${done[s.id] ? `<span class="done-badge">✓ Tamamlandı</span>` : ""}
         </div>
         ${multi ? `<div class="parts">${s.parts.map(x => `<button type="button" class="chip ${x.id === p.id ? "active" : ""}" data-part="${x.id}">${esc(x.title)}</button>`).join("")}</div>` : ""}
         <div class="tools">
-          ${p.special ? "" : `<button type="button" class="tbtn ${editing ? "primary" : ""}" id="editBtn">${editing ? "✓ Düzenlemeyi bitir" : "✏️ Düzenle"}</button>`}
-          <button type="button" class="tbtn word" data-exp="word">📝 Word</button>
-          <button type="button" class="tbtn pdf" data-exp="pdf">📄 PDF</button>
-          <button type="button" class="tbtn excel" data-exp="excel">📊 Excel</button>
+          ${p.special ? "" : `<button type="button" class="tbtn ${editing ? "primary" : ""}" id="editBtn">${editing ? "✓ Düzenlemeyi bitir" : ico("pen") + " Düzenle"}</button>`}
+          <button type="button" class="tbtn" data-exp="pick">${ico("download")} İndir</button>
         </div>
         ${editing ? `<div class="editing-note">Düzenleme açık. Metne ve tablo hücrelerine dokunup yazın; değişiklikler kaydedilir ve herkese yansır.</div>` : ""}
         ${s.id === "tarih" && !editing ? renderShiftBox() : ""}
         <div class="doc" id="doc">${p.special === "yoklama" ? renderYoklama() : p.special === "belge" ? renderBelge() : p.special === "gorev" ? renderGorev() : renderBlocks(p.blocks)}</div>
+        <div class="sec-foot"><label class="done-toggle ${done[s.id] ? "is-done" : ""}"><input type="checkbox" id="doneChk" ${done[s.id] ? "checked" : ""}> Bu bölüm tamamlandı</label></div>
       </section>`;
     if (p.special === "yoklama") { document.documentElement.style.setProperty("--hdr", ($(".top").offsetHeight || 90) + "px"); yokApplyFilter(); }
   }
 
+  const PH_RE = /\[[^\]\n]*\]/g;
+  function phP(s, path) { let n = 0; return esc(s).replace(PH_RE, m => `<span class="ph tap" role="button" tabindex="0" data-ph="${path}" data-n="${n++}">${m}</span>`); }
+  let phPending = null;
+  function phGet(b, a) { const [k, i, j] = a; return k === "x" ? b.x : k === "item" ? b.items[+i] : k === "chk" ? b.items[+i].x : k === "cell" ? b.rows[+i][+j] : ""; }
+  function phSet(b, a, v) { const [k, i, j] = a; if (k === "x") b.x = v; else if (k === "item") b.items[+i] = v; else if (k === "chk") b.items[+i].x = v; else if (k === "cell") b.rows[+i][+j] = v; }
+  function phOpen(el) {
+    const parts = el.dataset.ph.split("|"); const b = curPart().blocks[+parts[0]]; if (!b) return;
+    const inner = el.textContent.slice(1, -1).trim();
+    phPending = { bi: +parts[0], a: parts.slice(1), n: +el.dataset.n };
+    const hint = /^[_\s.]*$/.test(inner) ? "" : inner;
+    openSheet(`<h4>Alanı doldur</h4><p>${esc(curSec().title)} › ${esc(curPart().title)}${hint ? ` · <b>${esc(hint)}</b>` : ""}</p>
+      <input type="text" id="phIn" value="${esc(hint)}" placeholder="Yazın…" autocomplete="off">
+      <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button><button type="button" class="tbtn primary" data-act="phSave">Kaydet</button></div>`);
+    setTimeout(() => { const i = $("#phIn"); if (i) { i.focus(); i.select(); } }, 60);
+  }
+  function phSave() {
+    if (!phPending) return;
+    const v = ($("#phIn").value || "").trim(); if (!v) { toast("Bir değer yazın"); return; }
+    const b = curPart().blocks[phPending.bi]; if (!b) return;
+    let n = 0; const cur = String(phGet(b, phPending.a) || "");
+    phSet(b, phPending.a, cur.replace(PH_RE, m => (n++ === phPending.n ? v : m)));
+    phPending = null; closeSheet();
+    partChanged(true); addLog(`${curSec().title} › ${curPart().title}: boş alan dolduruldu (${v.slice(0, 40)})`);
+    render(); toast("Kaydedildi ✓");
+  }
   function renderBlocks(blocks) {
     return blocks.map((b, bi) => {
       const ce = editing ? ` contenteditable="true" data-bi="${bi}" data-k="x"` : "";
-      const txt = v => editing ? esc(v) : phHtml(v);
+      const txt = v => editing ? esc(v) : phP(v, bi + "|x");
       switch (b.t) {
         case "h": return `<h3${ce}>${txt(b.x)}</h3>`;
         case "b": return `<p class="b"${ce}>${txt(b.x)}</p>`;
@@ -227,14 +292,14 @@
   }
   function renderList(b, bi) {
     const tag = b.t;
-    if (!editing) return `<${tag}>${(b.items || []).map(i => `<li>${i ? phHtml(i) : "&nbsp;"}</li>`).join("")}</${tag}>`;
+    if (!editing) return `<${tag}>${(b.items || []).map((i, ii) => `<li>${i ? phP(i, bi + "|item|" + ii) : "&nbsp;"}</li>`).join("")}</${tag}>`;
     return `<div>${(b.items || []).map((i, ii) => `<div class="li-edit"><span>${tag === "ol" ? (ii + 1) + "." : "•"}</span><div contenteditable="true" data-bi="${bi}" data-k="item" data-i="${ii}">${esc(i)}</div><button type="button" class="mini del" data-op="li-del" data-bi="${bi}" data-i="${ii}" aria-label="Sil">✕</button></div>`).join("")}
       <button type="button" class="add-line" data-op="li-add" data-bi="${bi}">+ Madde ekle</button></div>`;
   }
   function renderChk(b, bi) {
     return `<ul class="chk">${(b.items || []).map((i, ii) => `<li class="${i.done ? "done" : ""}"><input type="checkbox" data-op="chk" data-bi="${bi}" data-i="${ii}" ${i.done ? "checked" : ""} aria-label="Tamamlandı">${editing
       ? `<div style="flex:1" contenteditable="true" data-bi="${bi}" data-k="chk" data-i="${ii}">${esc(i.x)}</div><button type="button" class="mini del" data-op="chk-del" data-bi="${bi}" data-i="${ii}" aria-label="Sil">✕</button>`
-      : `<span>${phHtml(i.x)}</span>`}</li>`).join("")}</ul>
+      : `<span>${phP(i.x, bi + "|chk|" + ii)}</span>`}</li>`).join("")}</ul>
       ${editing ? `<button type="button" class="add-line" data-op="chk-add" data-bi="${bi}">+ Madde ekle</button>` : ""}`;
   }
   function renderTable(b, bi) {
@@ -246,11 +311,11 @@
     h += `<div class="tbl-wrap"><table><thead><tr>${head.map((c, j) => `<th${editing ? ` contenteditable="true" data-bi="${bi}" data-k="head" data-j="${j}"` : ""}>${esc(c)}</th>`).join("")}${editing ? `<th class="row-ops"></th>` : ""}</tr></thead><tbody>`;
     (b.rows || []).forEach((r, ri) => {
       const week = W.isWeekRow(r), ram = W.isRamazan(r);
-      if (!editing && week) { h += `<tr class="week"><td colspan="${n}">${phHtml(r[0])}</td></tr>`; return; }
+      if (!editing && week) { h += `<tr class="week"><td colspan="${n}">${phP(r[0], bi + "|cell|" + ri + "|0")}</td></tr>`; return; }
       h += `<tr class="${week ? "week" : ""} ${ram ? "ramazan" : ""}">`;
       for (let j = 0; j < n; j++) {
         const v = r[j] || "";
-        h += editing ? `<td contenteditable="true" data-bi="${bi}" data-k="cell" data-i="${ri}" data-j="${j}">${esc(v)}</td>` : `<td>${phHtml(v)}</td>`;
+        h += editing ? `<td contenteditable="true" data-bi="${bi}" data-k="cell" data-i="${ri}" data-j="${j}">${esc(v)}</td>` : `<td>${phP(v, bi + "|cell|" + ri + "|" + j)}</td>`;
       }
       if (editing) h += `<td class="row-ops"><button type="button" class="mini" data-op="row-add" data-bi="${bi}" data-i="${ri}" aria-label="Altına satır ekle">＋</button> <button type="button" class="mini del" data-op="row-del" data-bi="${bi}" data-i="${ri}" aria-label="Satırı sil">✕</button></td>`;
       h += `</tr>`;
@@ -358,7 +423,7 @@
   }
 
   function fbInit() {
-    if (!window.firebase || !firebase.database) { setSync("off", "Çevrimdışı"); return; }
+    if (!window.firebase || !firebase.database) { setSync("off", "Bu cihazda"); return; }
     try {
       firebase.initializeApp(FB_CFG);
       fb.db = firebase.database();
@@ -486,7 +551,7 @@
       if (needPush) pushCustom();
       if (changed) {
         store(LS.data, data);
-        if (view.sec !== "durum" && !secById(view.sec)) view.sec = "program";
+        if (view.sec !== "durum" && view.sec !== "home" && !secById(view.sec)) view.sec = "home";
         renderNav();
         if (!editing) render(); else renderProgress();
       }
@@ -541,8 +606,9 @@
     const S = statusSummary(), p = S.p;
     const last = log[0];
     $("#main").innerHTML = `
+      <button type="button" class="back" data-nav="home">${ico("back")} Ana sayfa</button>
       <section class="card">
-        <h2 class="sec-title" style="margin-bottom:12px">📊 Son Durum</h2>
+        <h2 class="sec-title" style="margin-bottom:12px"><span class="ti">${ico("chart")}</span>Son Durum</h2>
         <div class="big">
           <div class="ring" style="--p:${p.pct}"><span>%${p.pct}</span></div>
           <div class="stat-lines">
@@ -563,7 +629,7 @@
         <h3 style="margin:0">Bölümler</h3>
         <ul class="status-list">${data.sections.map(s => {
           const n = placeholderCount(s);
-          return `<li><span class="st ${done[s.id] ? "ok" : ""}">${done[s.id] ? "Tamamlandı" : "Devam ediyor"}</span><span class="nm">${s.icon} ${esc(s.title)}</span>${s.id !== "acik" && n ? `<span class="ph-count">${n} boş alan</span>` : ""}<button type="button" class="mini" data-nav="${s.id}" aria-label="Aç">›</button></li>`;
+          return `<li><span class="st ${done[s.id] ? "ok" : ""}">${done[s.id] ? "Tamamlandı" : "Devam ediyor"}</span><span class="nm">${esc(s.title)}</span>${s.id !== "acik" && n ? `<span class="ph-count">${n} boş alan</span>` : ""}<button type="button" class="mini" data-nav="${s.id}" aria-label="Aç">›</button></li>`;
         }).join("")}</ul>
       </section>
       <section class="card">
@@ -624,6 +690,16 @@
   const FMT = { word: "Word", pdf: "PDF", excel: "Excel" };
   function exportChooser(fmt) {
     const s = curSec(), p = curPart(), multi = s.parts.length > 1;
+    if (fmt === "pick") {
+      openSheet(`<h4>${ico("download")} İndir</h4><p>Neyi indirmek istiyorsunuz?</p>
+        ${multi ? `<label class="cb"><input type="radio" name="expScope" value="part" checked> Bu sayfa <span class="muted">· ${esc(p.title)}</span></label>` : ""}
+        <label class="cb"><input type="radio" name="expScope" value="sec" ${multi ? "" : "checked"}> ${multi ? "Bu bölümün tümü" : "Bu bölüm"} <span class="muted">· ${esc(s.title)}</span></label>
+        <label class="cb"><input type="radio" name="expScope" value="all"> Tüm dosya <span class="muted">· bütün bölümler</span></label>
+        <div class="lbl" style="margin-top:12px">Biçim</div>
+        <div class="fmt-row"><button type="button" class="opt fmt word" data-run="word" data-scope="pick">Word<small>.docx</small></button><button type="button" class="opt fmt pdf" data-run="pdf" data-scope="pick">PDF<small>.pdf</small></button><button type="button" class="opt fmt excel" data-run="excel" data-scope="pick">Excel<small>.xlsx</small></button></div>
+        <div class="row"><button type="button" class="tbtn" data-close>Vazgeç</button></div>`);
+      return;
+    }
     openSheet(`<h4>${FMT[fmt]} çıktısı</h4><p>Hangi kısmı indirmek istiyorsunuz?</p>
       ${multi ? `<button type="button" class="opt" data-run="${fmt}" data-scope="part">Bu sayfa<small>${esc(p.title)}</small></button>` : ""}
       <button type="button" class="opt" data-run="${fmt}" data-scope="sec">${multi ? "Bu bölümün tümü" : "Bu bölüm"}<small>${esc(s.title)}${multi ? " · " + s.parts.length + " sayfa" : ""}</small></button>
@@ -1178,7 +1254,7 @@
     delete done[id]; store(LS.done, done); if (fb.ok) fb.root.child("done/" + id).remove().catch(() => {});
     store(LS.data, data); pushCustom();
     addLog("Sekmeyi sildi: " + s.title);
-    if (view.sec === id) view.sec = "program";
+    if (view.sec === id) view.sec = "home";
     renderNav(); render(); tabsSheet();
   }
 
@@ -1441,7 +1517,8 @@
     if (part) { if (editing) finishEdit(); view.part = view.part || {}; view.part[curSec().id] = part.dataset.part; store(LS.view, view); render(); return; }
     if (t.closest("#editBtn")) { editing ? (finishEdit(), render()) : startEdit(); return; }
     const ex = t.closest("[data-exp]"); if (ex) { exportChooser(ex.dataset.exp); return; }
-    const run = t.closest("[data-run]"); if (run) { runExport(run.dataset.run, run.dataset.scope); return; }
+    const run = t.closest("[data-run]"); if (run) { const sc = run.dataset.scope === "pick" ? ((document.querySelector("input[name=expScope]:checked") || {}).value || "sec") : run.dataset.scope; runExport(run.dataset.run, sc); return; }
+    const phEl = t.closest(".ph.tap"); if (phEl && !editing) { phOpen(phEl); return; }
     const op = t.closest("button[data-op]"); if (op) { onOp(op); return; }
     const sh = t.closest("[data-shift]"); if (sh) { shiftPreview(sh.dataset.shift === "input" ? ($("#shiftDate") || {}).value : sh.dataset.shift); return; }
     if (t.closest("[data-act='shiftGo']")) { applyShift(); return; }
@@ -1475,6 +1552,7 @@
       if (a === "install" && installEvt) { closeSheet(); installEvt.prompt(); installEvt = null; }
       if (a === "backup") { closeSheet(); backup(); }
       if (a === "restore") { closeSheet(); $("#importFile").click(); }
+      if (a === "phSave") { phSave(); return; }
       if (a === "progUndo") { progUndo(); return; }
       if (a === "progShiftYes") { applyShift(); return; }
       if (a === "reset") {
@@ -1519,6 +1597,8 @@
   });
   document.addEventListener("keydown", e => {
     if (e.key === "Escape" && !$("#sheetBack").hidden) closeSheet();
+    if (e.key === "Enter" && e.target.id === "phIn") { e.preventDefault(); phSave(); return; }
+    if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("tap")) { e.preventDefault(); phOpen(e.target); return; }
     if (e.key === "Enter" && e.target.id === "yokQ") {
       e.preventDefault();
       const vis = [...document.querySelectorAll("#yokList li")].filter(li => li.style.display !== "none" && li.dataset.p !== "1");
@@ -1540,6 +1620,8 @@
 
   /* ---------- başlat ---------- */
   try { seedSalon(); } catch (e) { console.warn(e); }
+  try { history.replaceState({ sec: "home" }, ""); } catch (e) {}
+  window.addEventListener("popstate", e => { if (!$("#sheetBack").hidden) closeSheet(); go((e.state && e.state.sec) || "home", true); });
   renderNav(); render();
   setSync("", "Bağlanıyor");
   fbInit();
